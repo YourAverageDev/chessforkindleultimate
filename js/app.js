@@ -79,6 +79,39 @@ function buildBoardTable() {
         }
         table.appendChild(tr);
     }
+    sizeBoard();
+}
+
+/* Sizes the board to fill the actual available screen space instead of a
+ * fixed CSS pixel size. Old Kindle viewports vary a lot (and some ancient
+ * WebKit builds don't scale a fixed-size layout up to fill the screen the
+ * way a modern mobile browser would), so this measures the real viewport
+ * and status-bar/controls heights each time and sets every square's size
+ * directly, which is what actually makes the board look "full size"
+ * rather than stuck at a small fixed default. */
+function sizeBoard() {
+    var vw = window.innerWidth || document.documentElement.clientWidth || 320;
+    var vh = window.innerHeight || document.documentElement.clientHeight || 480;
+
+    var statusBar = document.getElementById('status-bar');
+    var controls = document.getElementById('controls');
+    var statusH = (statusBar && statusBar.offsetHeight) || 30;
+    var controlsH = (controls && controls.offsetHeight) || 60;
+    var reserved = statusH + controlsH + 40; /* margins/padding breathing room */
+
+    var availableW = vw - 12;
+    var availableH = vh - reserved;
+    var maxSquare = Math.floor(Math.min(availableW, availableH) / 8);
+    if (maxSquare < 30) { maxSquare = 30; }
+    if (maxSquare > 100) { maxSquare = 100; }
+
+    for (var idx = 0; idx < 64; idx++) {
+        var td = document.getElementById('sqcell' + idx);
+        if (td) {
+            td.style.width = maxSquare + 'px';
+            td.style.height = maxSquare + 'px';
+        }
+    }
 }
 
 function updateBoardDisplay() {
@@ -330,6 +363,11 @@ function init() {
     document.getElementById('promo-r').onclick = function () { pickPromotion('r'); };
     document.getElementById('promo-b').onclick = function () { pickPromotion('b'); };
     document.getElementById('promo-n').onclick = function () { pickPromotion('n'); };
+
+    window.onresize = function () {
+        if (document.getElementById('game-screen').style.display !== 'none') { sizeBoard(); }
+    };
+    window.onorientationchange = window.onresize;
 
     showScreen('splash');
 }
