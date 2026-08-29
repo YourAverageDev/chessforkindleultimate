@@ -1,0 +1,9 @@
+{
+  "name": "chess-for-kindle-ultimate",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Chess for Kindle Ultimate - a static chess game with optional online play via Vercel serverless functions.",
+  "engines": {
+    "node": "18.x"
+  }
+}
