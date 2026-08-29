@@ -96,7 +96,7 @@ var OnlineClient = (function () {
                 pollTimer = setTimeout(poll, intervalMs);
             });
         };
-        pollTimer = setTimeout(poll, intervalMs);
+        pollTimer = setTimeout(poll, 0); /* first check fires right away, not after a full interval of silence */
     }
 
     function stopPolling() {

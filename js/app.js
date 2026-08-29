@@ -62,22 +62,42 @@ var clockTurnStartedAt = null;
 var clockTickTimer = null;
 var clockTimeoutFetchFired = false;
 
+/* Lichess play state. lichessSession mirrors what's persisted in
+ * localStorage by lichess.js (kept in a JS var too so we're not calling
+ * into localStorage on every frame). lichessGameId/lichessColor are also
+ * persisted (see LS_LICHESS_GAME below) specifically so a killed/reloaded
+ * page can resume a game in progress - old Kindle hardware getting the tab
+ * evicted under memory pressure is a real scenario, not a hypothetical. */
+var LS_LICHESS_GAME = 'lc_active_game';
+var lichessSession = null; /* { token, username, perfs } */
+var lichessGameId = null;
+var lichessColor = null;
+var lichessPendingChallengeId = null;
+var lichessSelectedColor = 'random';
+var lichessSelectedRated = false;
+var lichessMoveInFlight = false;
+var lichessPollFailCount = 0;
+var lichessIncomingChallenges = [];
+
 function setText(el, str) {
     if (el.textContent !== undefined) { el.textContent = str; }
     else { el.innerText = str; }
 }
 
+var ALL_SCREENS = [
+    'splash', 'local-rooms', 'difficulty',
+    'online-menu', 'online-public', 'online-public-list', 'online-join', 'online-waiting',
+    'lichess-login', 'lichess-menu', 'lichess-challenge', 'lichess-waiting', 'lichess-incoming',
+    'game'
+];
+
 function showScreen(name) {
     OnlineClient.stopPolling();
     stopClockTick();
-    document.getElementById('splash-screen').style.display = (name === 'splash') ? 'block' : 'none';
-    document.getElementById('difficulty-screen').style.display = (name === 'difficulty') ? 'block' : 'none';
-    document.getElementById('online-menu-screen').style.display = (name === 'online-menu') ? 'block' : 'none';
-    document.getElementById('online-public-screen').style.display = (name === 'online-public') ? 'block' : 'none';
-    document.getElementById('online-public-list-screen').style.display = (name === 'online-public-list') ? 'block' : 'none';
-    document.getElementById('online-join-screen').style.display = (name === 'online-join') ? 'block' : 'none';
-    document.getElementById('online-waiting-screen').style.display = (name === 'online-waiting') ? 'block' : 'none';
-    document.getElementById('game-screen').style.display = (name === 'game') ? 'block' : 'none';
+    for (var i = 0; i < ALL_SCREENS.length; i++) {
+        var screenName = ALL_SCREENS[i];
+        document.getElementById(screenName + '-screen').style.display = (screenName === name) ? 'block' : 'none';
+    }
     hideOverlay('promo-overlay');
     hideOverlay('gameover-overlay');
 }
@@ -126,6 +146,22 @@ function buildBoardTable() {
             a.id = 'sq' + idx;
             a.setAttribute('onclick', 'onSquareClick(' + idx + ')');
             td.appendChild(a);
+
+            var onDark = (file + rank) % 2 === 0;
+            var coordColorClass = onDark ? 'coord-on-dark' : 'coord-on-light';
+            if (col === 0) {
+                var rankLabel = document.createElement('span');
+                rankLabel.className = 'coord-label ' + coordColorClass;
+                setText(rankLabel, String(rank + 1));
+                td.appendChild(rankLabel);
+            }
+            if (row === 7) {
+                var fileLabel = document.createElement('span');
+                fileLabel.className = 'coord-label coord-file ' + coordColorClass;
+                setText(fileLabel, String.fromCharCode(97 + file));
+                td.appendChild(fileLabel);
+            }
+
             tr.appendChild(td);
         }
         table.appendChild(tr);
@@ -147,10 +183,14 @@ function sizeBoard() {
     var statusBar = document.getElementById('status-bar');
     var controls = document.getElementById('controls');
     var clocks = document.getElementById('chess-clocks');
+    var lichessClock = document.getElementById('lichess-clock');
+    var banner = document.getElementById('reconnect-banner');
     var statusH = (statusBar && statusBar.offsetHeight) || 30;
     var controlsH = (controls && controls.offsetHeight) || 60;
     var clocksH = (clocks && clocks.offsetHeight) || 0; /* 0 when hidden (display:none) */
-    var reserved = statusH + controlsH + clocksH + 40; /* margins/padding breathing room */
+    var lichessClockH = (lichessClock && lichessClock.offsetHeight) || 0;
+    var bannerH = (banner && banner.offsetHeight) || 0;
+    var reserved = statusH + controlsH + clocksH + lichessClockH + bannerH + 40; /* margins/padding breathing room */
 
     var availableW = vw - 12;
     var availableH = vh - reserved;
@@ -237,6 +277,8 @@ function updateStatusText(status) {
         text = 'Computer is thinking...';
     } else if (mode === 'online' && !gameOver) {
         text = (currentState.turn === onlineColor ? 'Your move' : "Waiting for opponent's move") + checkSuffix;
+    } else if (mode === 'lichess' && !gameOver) {
+        text = (currentState.turn === lichessColor ? 'Your move' : "Waiting for opponent's move") + checkSuffix;
     } else if (status === 'check') {
         text = turnName + ' to move — Check!';
     } else {
@@ -330,13 +372,16 @@ function pickPromotion(pieceType) {
     pendingPromotionMoves = null;
     hideOverlay('promo-overlay');
     if (!chosen) { return; }
-    if (mode === 'online') { commitOnlineMove(chosen); } else { commitMove(chosen); }
+    if (mode === 'online') { commitOnlineMove(chosen); }
+    else if (mode === 'lichess') { commitLichessMove(chosen); }
+    else { commitMove(chosen); }
 }
 
 function onSquareClick(idx) {
     if (gameOver) { return; }
     if (mode === 'ai' && currentState.turn === aiColor) { return; }
     if (mode === 'online' && currentState.turn !== onlineColor) { return; }
+    if (mode === 'lichess' && (currentState.turn !== lichessColor || lichessMoveInFlight)) { return; }
 
     var piece = currentState.board[idx];
 
@@ -347,7 +392,9 @@ function onSquareClick(idx) {
             if (mv.from === selectedSquare && mv.to === idx) { matches.push(mv); }
         }
         if (matches.length === 1) {
-            if (mode === 'online') { commitOnlineMove(matches[0]); } else { commitMove(matches[0]); }
+            if (mode === 'online') { commitOnlineMove(matches[0]); }
+            else if (mode === 'lichess') { commitLichessMove(matches[0]); }
+            else { commitMove(matches[0]); }
             return;
         }
         if (matches.length > 1) { showPromotionPicker(matches); return; }
@@ -362,8 +409,11 @@ function onSquareClick(idx) {
 
 function applyModeControlVisibility() {
     var isOnline = (mode === 'online');
-    document.getElementById('btn-new').style.display = isOnline ? 'none' : 'inline-block';
-    document.getElementById('btn-undo').style.display = isOnline ? 'none' : 'inline-block';
+    var isLichess = (mode === 'lichess');
+    document.getElementById('btn-new').style.display = (isOnline || isLichess) ? 'none' : 'inline-block';
+    document.getElementById('btn-undo').style.display = (isOnline || isLichess) ? 'none' : 'inline-block';
+    document.getElementById('btn-resign').style.display = isLichess ? 'inline-block' : 'none';
+    document.getElementById('btn-draw').style.display = isLichess ? 'inline-block' : 'none';
 }
 
 function startGame(selectedMode, level) {
@@ -384,6 +434,7 @@ function startGame(selectedMode, level) {
     updateBoardDisplay();
     updateStatusText();
     applyModeControlVisibility();
+    document.getElementById('lichess-clock').style.display = 'none';
     showScreen('game');
 }
 
@@ -514,6 +565,7 @@ function beginOnlineGame() {
     applyModeControlVisibility();
     onlineTimerEnabled = false;
     clockTimeoutFetchFired = false;
+    document.getElementById('lichess-clock').style.display = 'none';
     showScreen('game');
     startClockTick();
     OnlineClient.startPolling(function (cb) { OnlineClient.fetchState(onlineRoom, cb); }, 1500, onOnlineGameUpdate);
@@ -697,8 +749,379 @@ function commitOnlineMove(mv) {
     });
 }
 
+/* ---- Lichess play ---- */
+
+function lichessSessionToken() {
+    return lichessSession ? lichessSession.token : null;
+}
+
+function loadLichessSessionFromStorage() {
+    var stored = LichessClient.getStoredSession();
+    lichessSession = stored;
+    return stored;
+}
+
+function saveActiveLichessGame(gameId, color) {
+    lichessGameId = gameId;
+    lichessColor = color;
+    try {
+        if (gameId) { window.localStorage.setItem(LS_LICHESS_GAME, JSON.stringify({ gameId: gameId, color: color })); }
+        else { window.localStorage.removeItem(LS_LICHESS_GAME); }
+    } catch (e) { /* no persistence available - reconnection-after-reload just won't work on this browser */ }
+}
+
+function loadActiveLichessGameFromStorage() {
+    try {
+        var raw = window.localStorage.getItem(LS_LICHESS_GAME);
+        return raw ? JSON.parse(raw) : null;
+    } catch (e) { return null; }
+}
+
+function formatLichessError(err) {
+    if (err && err.network) { return 'Network error — check your connection.'; }
+    if (err && err.data && err.data.detail && err.data.detail.error) { return err.data.detail.error; }
+    if (err && err.status === 401) { return 'Your Lichess login expired. Please log in again.'; }
+    return 'Something went wrong. Please try again.';
+}
+
+function goToLichessHome() {
+    if (!loadLichessSessionFromStorage()) {
+        setMessage('lichess-login-error', '');
+        showScreen('lichess-login');
+        return;
+    }
+    showLichessMenu();
+}
+
+function loginWithLichess() {
+    LichessClient.startLogin(); /* full-page redirect to lichess.org - never returns to this function */
+}
+
+function showLichessMenu() {
+    setMessage('lichess-menu-error', '');
+    setText(document.getElementById('lichess-me-text'), 'Logged in as ' + lichessSession.username + '…');
+    showScreen('lichess-menu');
+
+    LichessClient.fetchMe(lichessSessionToken(), function (err, data) {
+        if (err || !data) {
+            if (err && err.status === 401) {
+                LichessClient.clearStoredSession();
+                lichessSession = null;
+                showScreen('lichess-login');
+                setMessage('lichess-login-error', 'Your login expired. Please log in again.');
+            }
+            return;
+        }
+        var perfs = data.perfs || {};
+        var bits = [];
+        var order = ['bullet', 'blitz', 'rapid', 'classical'];
+        for (var i = 0; i < order.length; i++) {
+            var p = perfs[order[i]];
+            if (p && typeof p.rating === 'number') { bits.push(order[i] + ' ' + p.rating); }
+        }
+        setText(document.getElementById('lichess-me-text'), 'Logged in as ' + data.username + (bits.length ? ' (' + bits.join(', ') + ')' : ''));
+    });
+
+    refreshLichessIncomingBadge();
+}
+
+function refreshLichessIncomingBadge() {
+    LichessClient.pollEvents(lichessSessionToken(), function (err, data) {
+        if (err || !data) { return; }
+        lichessIncomingChallenges = data.challenges || [];
+        var badge = document.getElementById('lichess-incoming-badge');
+        setText(badge, lichessIncomingChallenges.length ? ' (' + lichessIncomingChallenges.length + ')' : '');
+    });
+}
+
+function logoutOfLichess() {
+    LichessClient.logout(function () {
+        lichessSession = null;
+        showScreen('splash');
+    });
+}
+
+/* ---- challenge a player ---- */
+
+function openLichessChallengeScreen() {
+    setMessage('lichess-challenge-error', '');
+    document.getElementById('lichess-username-input').value = '';
+    lichessSelectedColor = 'random';
+    lichessSelectedRated = false;
+    updateChoiceButtons();
+    showScreen('lichess-challenge');
+}
+
+function updateChoiceButtons() {
+    var whiteBtn = document.getElementById('btn-color-white');
+    var blackBtn = document.getElementById('btn-color-black');
+    var randomBtn = document.getElementById('btn-color-random');
+    whiteBtn.className = 'big-btn small-btn choice-btn' + (lichessSelectedColor === 'white' ? ' selected' : '');
+    blackBtn.className = 'big-btn small-btn choice-btn' + (lichessSelectedColor === 'black' ? ' selected' : '');
+    randomBtn.className = 'big-btn small-btn choice-btn' + (lichessSelectedColor === 'random' ? ' selected' : '');
+
+    var casualBtn = document.getElementById('btn-rated-casual');
+    var ratedBtn = document.getElementById('btn-rated-rated');
+    casualBtn.className = 'big-btn small-btn choice-btn' + (!lichessSelectedRated ? ' selected' : '');
+    ratedBtn.className = 'big-btn small-btn choice-btn' + (lichessSelectedRated ? ' selected' : '');
+}
+
+function sendLichessChallenge() {
+    setMessage('lichess-challenge-error', '');
+    var username = document.getElementById('lichess-username-input').value.replace(/^\s+|\s+$/g, '');
+    if (!username) { setMessage('lichess-challenge-error', 'Enter a Lichess username.'); return; }
+
+    var tc = document.getElementById('lichess-timecontrol-select').value.split(',');
+    var clockLimitSec = parseInt(tc[0], 10);
+    var clockIncrementSec = parseInt(tc[1], 10);
+
+    LichessClient.createChallenge(lichessSessionToken(), {
+        username: username,
+        clockLimitSec: clockLimitSec,
+        clockIncrementSec: clockIncrementSec,
+        color: lichessSelectedColor,
+        rated: lichessSelectedRated
+    }, function (err, data) {
+        if (err || !data) { setMessage('lichess-challenge-error', formatLichessError(err)); return; }
+        lichessPendingChallengeId = data.challengeId;
+        setText(document.getElementById('lichess-waiting-text'), 'Waiting for ' + username + ' to accept the challenge.');
+        setMessage('lichess-waiting-error', '');
+        showScreen('lichess-waiting');
+        OnlineClient.startPolling(function (cb) {
+            LichessClient.checkChallengeStatus(lichessSessionToken(), lichessPendingChallengeId, cb);
+        }, 2000, onLichessChallengeStatusUpdate);
+    });
+}
+
+function onLichessChallengeStatusUpdate(err, data) {
+    if (err || !data) { setMessage('lichess-waiting-error', formatLichessError(err)); return; }
+    setMessage('lichess-waiting-error', '');
+    if (data.started) {
+        OnlineClient.stopPolling();
+        beginLichessGame(data.gameId, data.color);
+    }
+}
+
+/* ---- incoming challenges ---- */
+
+function openLichessIncomingScreen() {
+    setMessage('lichess-incoming-error', '');
+    showScreen('lichess-incoming');
+    refreshLichessIncomingList();
+}
+
+function refreshLichessIncomingList() {
+    LichessClient.pollEvents(lichessSessionToken(), function (err, data) {
+        if (err || !data) { setMessage('lichess-incoming-error', formatLichessError(err)); return; }
+        lichessIncomingChallenges = data.challenges || [];
+        renderLichessIncomingList();
+    });
+}
+
+function renderLichessIncomingList() {
+    var container = document.getElementById('lichess-incoming-list');
+    var emptyMsg = document.getElementById('lichess-incoming-empty');
+    container.innerHTML = '';
+
+    if (lichessIncomingChallenges.length === 0) {
+        emptyMsg.style.display = 'block';
+        return;
+    }
+    emptyMsg.style.display = 'none';
+
+    for (var i = 0; i < lichessIncomingChallenges.length; i++) {
+        var ch = lichessIncomingChallenges[i];
+        var item = document.createElement('div');
+        item.className = 'room-list-item';
+
+        var nameEl = document.createElement('div');
+        nameEl.className = 'room-list-code';
+        setText(nameEl, ch.challengerName + (ch.challengerRating ? ' (' + ch.challengerRating + ')' : ''));
+        item.appendChild(nameEl);
+
+        var metaEl = document.createElement('div');
+        metaEl.className = 'room-list-meta';
+        var tcText = ch.timeControl && ch.timeControl.show ? ch.timeControl.show : 'Unknown time control';
+        setText(metaEl, tcText + (ch.rated ? ' · Rated' : ' · Casual'));
+        item.appendChild(metaEl);
+
+        var acceptBtn = document.createElement('a');
+        acceptBtn.href = 'javascript:void(0)';
+        acceptBtn.className = 'room-list-join-btn';
+        setText(acceptBtn, 'Accept');
+        acceptBtn.setAttribute('onclick', 'respondToLichessChallenge(\'' + ch.id + '\',\'accept\')');
+        item.appendChild(acceptBtn);
+
+        var declineBtn = document.createElement('a');
+        declineBtn.href = 'javascript:void(0)';
+        declineBtn.className = 'text-link';
+        setText(declineBtn, 'Decline');
+        declineBtn.setAttribute('onclick', 'respondToLichessChallenge(\'' + ch.id + '\',\'decline\')');
+        item.appendChild(declineBtn);
+
+        container.appendChild(item);
+    }
+}
+
+function respondToLichessChallenge(challengeId, action) {
+    LichessClient.respondToChallenge(lichessSessionToken(), challengeId, action, function (err, data) {
+        if (err || !data) { setMessage('lichess-incoming-error', formatLichessError(err)); return; }
+        if (action === 'decline') { refreshLichessIncomingList(); return; }
+        /* Accepted - the resulting game shares the challenge's id. We don't
+         * know our assigned color from this response alone, so ask
+         * game-state for it once the game is confirmed active. */
+        LichessClient.fetchGameState(lichessSessionToken(), challengeId, function (err2, data2) {
+            if (!err2 && data2 && data2.active) { beginLichessGame(challengeId, data2.color); }
+            else { refreshLichessIncomingList(); }
+        });
+    });
+}
+
+/* ---- playing a Lichess game ---- */
+
+function beginLichessGame(gameId, color) {
+    mode = 'lichess';
+    lichessMoveInFlight = false;
+    lichessPollFailCount = 0;
+    gameOver = false;
+    selectedSquare = null;
+    historyStack = [];
+    saveActiveLichessGame(gameId, color);
+    flipped = (color === 'b');
+    currentState = ChessEngine.createInitialState();
+    recomputeLegalMoves();
+    buildBoardTable();
+    updateBoardDisplay();
+    updateStatusText();
+    applyModeControlVisibility();
+    document.getElementById('lichess-clock').style.display = 'block';
+    document.getElementById('chess-clocks').style.display = 'none';
+    setReconnecting(false);
+    showScreen('game');
+    OnlineClient.startPolling(function (cb) {
+        LichessClient.fetchGameState(lichessSessionToken(), gameId, cb);
+    }, 2000, onLichessGameUpdate);
+}
+
+function setReconnecting(isReconnecting) {
+    document.getElementById('reconnect-banner').style.display = isReconnecting ? 'block' : 'none';
+}
+
+function lichessResultMessage(data) {
+    var statusMap = {
+        mate: 'Checkmate',
+        resign: 'Resignation',
+        stalemate: 'Stalemate',
+        timeout: 'Timeout',
+        outoftime: 'Time forfeit',
+        draw: 'Draw',
+        aborted: 'Game aborted',
+        cheat: 'Ended (rules violation)',
+        noStart: 'Opponent never started'
+    };
+    var reason = statusMap[data.status] || 'Game over';
+    if (data.status === 'draw' || data.status === 'stalemate' || data.status === 'aborted') { return reason; }
+    if (data.winner) {
+        var winnerName = (data.winner === lichessColor) ? 'You' : 'Opponent';
+        return winnerName + ' won — ' + reason;
+    }
+    return reason;
+}
+
+function onLichessGameUpdate(err, data) {
+    if (err || !data) {
+        lichessPollFailCount++;
+        if (lichessPollFailCount >= 2) { setReconnecting(true); }
+        return;
+    }
+    lichessPollFailCount = 0;
+    setReconnecting(false);
+    applyLichessState(data);
+}
+
+function applyLichessState(data) {
+    if (data.active) {
+        currentState = ChessEngine.stateFromFen(data.fen);
+        lastMove = data.lastMove ? ChessEngine.uciToMove(data.lastMove) : null;
+        selectedSquare = null;
+        recomputeLegalMoves();
+        updateBoardDisplay();
+        updateLichessClockDisplay(data.secondsLeft, data.isMyTurn);
+        updateStatusText();
+        return;
+    }
+
+    /* Game finished (or was never found - treat as finished/unknown). */
+    if (!gameOver) {
+        gameOver = true;
+        OnlineClient.stopPolling();
+        saveActiveLichessGame(null, null);
+        showGameOver(lichessResultMessage(data));
+    }
+}
+
+function updateLichessClockDisplay(secondsLeft, isMyTurn) {
+    var box = document.getElementById('lichess-clock');
+    if (typeof secondsLeft !== 'number') { box.style.display = 'none'; return; }
+    box.style.display = 'block';
+    var m = Math.floor(secondsLeft / 60);
+    var s = secondsLeft % 60;
+    var label = isMyTurn ? 'Your time: ' : "Opponent's time: ";
+    setText(box, label + m + ':' + (s < 10 ? '0' : '') + s);
+}
+
+function commitLichessMove(mv) {
+    if (lichessMoveInFlight) { return; } /* a move is already in flight - never send a second one on top of it */
+    var uci = ChessEngine.moveToUci(mv);
+
+    lichessMoveInFlight = true;
+    currentState = ChessEngine.makeMove(currentState, mv);
+    lastMove = { from: mv.from, to: mv.to };
+    selectedSquare = null;
+    recomputeLegalMoves();
+    updateBoardDisplay();
+    var localStatus = ChessEngine.getStatus(currentState, currentLegalMoves);
+    updateStatusText(localStatus);
+
+    LichessClient.sendMove(lichessSessionToken(), lichessGameId, uci, false, function (err) {
+        lichessMoveInFlight = false;
+        if (!err) { return; }
+        /* Rejected (stale state, race, expired session, etc.) - Lichess is
+         * authoritative here, so pull its real state rather than trust our
+         * optimistic guess any further. */
+        LichessClient.fetchGameState(lichessSessionToken(), lichessGameId, function (err2, data2) {
+            if (!err2 && data2) { applyLichessState(data2); }
+        });
+    });
+}
+
+function resignLichessGame() {
+    if (mode !== 'lichess' || !lichessGameId) { return; }
+    LichessClient.resign(lichessSessionToken(), lichessGameId, function () { /* result arrives via the next poll */ });
+}
+
+function offerOrAcceptLichessDraw() {
+    if (mode !== 'lichess' || !lichessGameId) { return; }
+    LichessClient.draw(lichessSessionToken(), lichessGameId, true, function () { /* result/offer state arrives via the next poll */ });
+}
+
+/* On startup, if a Lichess game was left active (tab killed, reload, the
+ * device itself losing power - all real scenarios on old Kindle hardware),
+ * try to resume it before showing the splash screen. */
+function tryResumeLichessGame() {
+    if (!loadLichessSessionFromStorage()) { return false; }
+    var saved = loadActiveLichessGameFromStorage();
+    if (!saved || !saved.gameId) { return false; }
+    LichessClient.fetchGameState(lichessSessionToken(), saved.gameId, function (err, data) {
+        if (err || !data) { showScreen('splash'); return; }
+        if (data.active) { beginLichessGame(saved.gameId, saved.color); }
+        else { saveActiveLichessGame(null, null); showScreen('splash'); }
+    });
+    return true;
+}
+
 function undoMove() {
-    if (mode === 'online') { return; }
+    if (mode === 'online' || mode === 'lichess') { return; }
     if (historyStack.length === 0) { return; }
     gameOver = false;
     hideOverlay('gameover-overlay');
@@ -722,9 +1145,13 @@ function flipBoard() {
 }
 
 function init() {
+    document.getElementById('btn-play-lichess').onclick = function () { goToLichessHome(); };
+    document.getElementById('btn-local-rooms').onclick = function () { showScreen('local-rooms'); };
+    document.getElementById('btn-local-rooms-back').onclick = function () { showScreen('splash'); };
+
     document.getElementById('btn-2p').onclick = function () { startGame('2p', null); };
     document.getElementById('btn-vs-ai').onclick = function () { showScreen('difficulty'); };
-    document.getElementById('btn-diff-back').onclick = function () { showScreen('splash'); };
+    document.getElementById('btn-diff-back').onclick = function () { showScreen('local-rooms'); };
 
     document.getElementById('btn-diff-400').onclick = function () { startGame('ai', 400); };
     document.getElementById('btn-diff-800').onclick = function () { startGame('ai', 800); };
@@ -737,9 +1164,13 @@ function init() {
     document.getElementById('btn-undo').onclick = function () { undoMove(); };
     document.getElementById('btn-flip').onclick = function () { flipBoard(); };
     document.getElementById('btn-menu').onclick = function () { showScreen('splash'); };
+    document.getElementById('btn-resign').onclick = function () { resignLichessGame(); };
+    document.getElementById('btn-draw').onclick = function () { offerOrAcceptLichessDraw(); };
 
     document.getElementById('btn-gameover-new').onclick = function () {
-        if (mode === 'online') { showScreen('online-menu'); } else { startGame(mode, currentLevel); }
+        if (mode === 'online') { showScreen('online-menu'); }
+        else if (mode === 'lichess') { showScreen('lichess-menu'); }
+        else { startGame(mode, currentLevel); }
     };
     document.getElementById('btn-gameover-menu').onclick = function () { showScreen('splash'); };
 
@@ -749,7 +1180,7 @@ function init() {
     document.getElementById('promo-n').onclick = function () { pickPromotion('n'); };
 
     document.getElementById('btn-online').onclick = function () { showScreen('online-menu'); };
-    document.getElementById('btn-online-back').onclick = function () { showScreen('splash'); };
+    document.getElementById('btn-online-back').onclick = function () { showScreen('local-rooms'); };
     document.getElementById('btn-online-create').onclick = function () { createOnlineGame(false); };
     document.getElementById('btn-online-join').onclick = function () {
         setMessage('online-join-error', '');
@@ -772,6 +1203,24 @@ function init() {
     document.getElementById('btn-public-list-back').onclick = function () { showScreen('online-public'); };
     document.getElementById('btn-public-refresh').onclick = function () { refreshPublicRoomList(); };
 
+    document.getElementById('btn-lichess-login').onclick = function () { loginWithLichess(); };
+    document.getElementById('btn-lichess-login-back').onclick = function () { showScreen('splash'); };
+    document.getElementById('btn-lichess-menu-back').onclick = function () { showScreen('splash'); };
+    document.getElementById('btn-lichess-logout').onclick = function () { logoutOfLichess(); };
+    document.getElementById('btn-lichess-challenge').onclick = function () { openLichessChallengeScreen(); };
+    document.getElementById('btn-lichess-incoming').onclick = function () { openLichessIncomingScreen(); };
+    document.getElementById('btn-lichess-challenge-back').onclick = function () { showScreen('lichess-menu'); };
+    document.getElementById('btn-lichess-incoming-back').onclick = function () { showScreen('lichess-menu'); };
+    document.getElementById('btn-lichess-incoming-refresh').onclick = function () { refreshLichessIncomingList(); };
+    document.getElementById('btn-lichess-waiting-cancel').onclick = function () { showScreen('lichess-menu'); };
+    document.getElementById('btn-lichess-send-challenge').onclick = function () { sendLichessChallenge(); };
+
+    document.getElementById('btn-color-white').onclick = function () { lichessSelectedColor = 'white'; updateChoiceButtons(); };
+    document.getElementById('btn-color-black').onclick = function () { lichessSelectedColor = 'black'; updateChoiceButtons(); };
+    document.getElementById('btn-color-random').onclick = function () { lichessSelectedColor = 'random'; updateChoiceButtons(); };
+    document.getElementById('btn-rated-casual').onclick = function () { lichessSelectedRated = false; updateChoiceButtons(); };
+    document.getElementById('btn-rated-rated').onclick = function () { lichessSelectedRated = true; updateChoiceButtons(); };
+
     window.onresize = function () {
         if (document.getElementById('game-screen').style.display !== 'none') { sizeBoard(); }
     };
@@ -787,7 +1236,25 @@ function init() {
         }
     };
 
-    showScreen('splash');
+    /* On every load: first check whether this is Lichess redirecting back
+     * from the OAuth consent screen; if not, try resuming a Lichess game
+     * left active (tab killed/reloaded); only if neither applies does the
+     * app fall back to the ordinary splash screen. */
+    LichessClient.handleOAuthCallback(function (err, result) {
+        if (result) {
+            lichessSession = LichessClient.getStoredSession();
+            showLichessMenu();
+            return;
+        }
+        if (err) {
+            showScreen('lichess-login');
+            setMessage('lichess-login-error', err.message || 'Login failed. Please try again.');
+            return;
+        }
+        if (!tryResumeLichessGame()) {
+            showScreen('splash');
+        }
+    });
 }
 
 init();
