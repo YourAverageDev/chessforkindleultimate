@@ -5,8 +5,13 @@
  * addEventListener requirement, no Promises).
  */
 
-var WHITE_GLYPHS = { k: '♔', q: '♕', r: '♖', b: '♗', n: '♘', p: '♙' };
-var BLACK_GLYPHS = { k: '♚', q: '♛', r: '♜', b: '♝', n: '♞', p: '♟' };
+/* Piece artwork is a single sprite sheet (img/pieces.png): 6 columns
+ * (k,q,b,n,r,p) x 2 rows (white,black), each cell square. Percentage-based
+ * background-position/background-size means each square shows the right
+ * piece regardless of the board's current rendered size - no JS resize
+ * math needed, and it stays correct across the responsive breakpoints. */
+var SPRITE_COL = { k: '0%', q: '20%', b: '40%', n: '60%', r: '80%', p: '100%' };
+var SPRITE_ROW = { w: '0%', b: '100%' };
 
 var DIFFICULTY_CONFIGS = {
     easy: { maxDepth: 1, timeLimit: 400, randomness: 0.35 },
@@ -110,12 +115,10 @@ function updateBoardDisplay() {
 
         var piece = currentState.board[idx];
         if (piece) {
-            var glyph = (piece.color === 'w') ? WHITE_GLYPHS[piece.type] : BLACK_GLYPHS[piece.type];
-            setText(a, glyph);
-            a.className = 'piece-link ' + (piece.color === 'w' ? 'piece-white' : 'piece-black');
+            a.style.backgroundImage = "url('/img/pieces.png')";
+            a.style.backgroundPosition = SPRITE_COL[piece.type] + ' ' + SPRITE_ROW[piece.color];
         } else {
-            setText(a, '');
-            a.className = 'piece-link';
+            a.style.backgroundImage = 'none';
         }
     }
 }
@@ -215,8 +218,17 @@ function clearSelection() {
     updateBoardDisplay();
 }
 
+var PROMO_BUTTON_IDS = { q: 'promo-q', r: 'promo-r', b: 'promo-b', n: 'promo-n' };
+
 function showPromotionPicker(matches) {
     pendingPromotionMoves = matches;
+    var color = currentState.turn;
+    for (var type in PROMO_BUTTON_IDS) {
+        if (!PROMO_BUTTON_IDS.hasOwnProperty(type)) { continue; }
+        var el = document.getElementById(PROMO_BUTTON_IDS[type]);
+        el.style.backgroundImage = "url('/img/pieces.png')";
+        el.style.backgroundPosition = SPRITE_COL[type] + ' ' + SPRITE_ROW[color];
+    }
     document.getElementById('promo-overlay').style.display = 'block';
 }
 

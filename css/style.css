@@ -45,11 +45,24 @@ html, body {
 }
 
 .board-icon {
-    font-size: 36px;
-    letter-spacing: 6px;
     margin: 14px 0 20px 0;
-    color: #333333;
 }
+
+.piece-icon {
+    display: inline-block;
+    width: 40px;
+    height: 40px;
+    margin: 0 4px;
+    vertical-align: middle;
+    background-image: url('/img/pieces.png');
+    background-repeat: no-repeat;
+    background-size: 600% 200%;
+}
+
+.icon-k { background-position: 0% 0%; }
+.icon-q { background-position: 20% 0%; }
+.icon-b { background-position: 40% 0%; }
+.icon-r { background-position: 80% 0%; }
 
 .menu-buttons {
     margin: 0 auto;
@@ -127,18 +140,9 @@ html, body {
     width: 100%;
     height: 100%;
     text-decoration: none;
-    color: inherit;
-    font-size: 30px;
-    line-height: 40px;
-}
-
-.piece-white {
-    color: #ffffff;
-    text-shadow: -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000;
-}
-
-.piece-black {
-    color: #000000;
+    background-repeat: no-repeat;
+    background-size: 600% 200%;
+    background-position: 0% 0%;
 }
 
 #controls {
@@ -194,13 +198,12 @@ html, body {
     display: inline-block;
     width: 52px;
     height: 52px;
-    line-height: 52px;
-    font-size: 32px;
-    background: #ffffff;
+    background-color: #ffffff;
+    background-repeat: no-repeat;
+    background-size: 600% 200%;
     border: 2px solid #222222;
     margin: 4px;
     text-decoration: none;
-    color: #000000;
 }
 
 .promo-btn:active {
@@ -209,10 +212,8 @@ html, body {
 
 @media (min-width: 480px) {
     #board-table td { width: 52px; height: 52px; }
-    .piece-link { font-size: 40px; line-height: 52px; }
 }
 
 @media (min-width: 700px) {
     #board-table td { width: 64px; height: 64px; }
-    .piece-link { font-size: 50px; line-height: 64px; }
 }

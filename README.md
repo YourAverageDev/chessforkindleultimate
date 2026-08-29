@@ -18,10 +18,11 @@ slow refresh. Everything here is written around those constraints:
   network at runtime, so it also works offline once loaded.
 - **`<table>`-based board layout**, not Flexbox/Grid, for guaranteed layout
   support on old rendering engines.
-- **Unicode chess glyphs** (♔♕♖♗♘♙ / ♚♛♜♝♞♟) instead of image sprites —
-  no image requests, crisp at any zoom level, and the outlined-vs-filled
-  glyph pairs read correctly in pure grayscale on e-ink without relying on
-  color at all (the same trick printed chess diagrams use).
+- **A single small sprite sheet** (`img/pieces.png`, 6x2 grid, ~47KB) for
+  all twelve piece images, positioned with percentage-based
+  `background-position`/`background-size` so one image request covers the
+  whole board and every square recolors/repositions correctly at any
+  responsive board size with no JS resize math.
 - **Full page repaints are avoided**: the board table is built once, and
   moves only update the ~64 existing cells' text/class rather than
   rebuilding the DOM, which keeps e-ink flicker to a minimum.
@@ -45,6 +46,23 @@ iterative-deepening negamax search with alpha-beta pruning, material
 scoring, and a hard time cap — as a small, self-contained engine built
 directly on this project's own rules engine (`js/chessEngine.js`), with no
 network dependency at all.
+
+## Piece artwork — please read before publishing this publicly
+
+`img/pieces.png` is chess.com's "Classic" piece set, pulled from
+[GiorgioMegrelli/chess.com-boards-and-pieces](https://github.com/GiorgioMegrelli/chess.com-boards-and-pieces),
+a community repo that mirrors images scraped directly from chess.com's own
+CDN. That repo carries no license grant for the artwork, and it's
+chess.com's proprietary art, not something freely licensed for reuse — so
+bundling it here is a real copyright/ToS risk if this project is deployed
+publicly or shared widely, not just a formality. This was used because it's
+what was explicitly requested after the previous placeholder pieces were
+rejected as unrecognizable, but it's worth being aware of before, say,
+pushing this to a public Vercel URL. A lower-risk swap later would be a
+clearly-licensed set such as the CC-BY-SA "cburnett" pieces used by
+Wikipedia/Lichess (different, more detailed art style) — replacing
+`img/pieces.png` with a same-layout sprite (6 columns: k,q,b,n,r,p; 2 rows:
+white,black) is the only change that would take.
 
 ## Project structure
 
