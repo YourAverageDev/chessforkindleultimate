@@ -21,7 +21,15 @@ module.exports = async function handler(req, res) {
             result: null,
             public: isPublic,
             createdAt: now,
-            lastMoveAt: now
+            lastMoveAt: now,
+            /* 10-minute clock, Public Server Play only - private room-code
+             * games (Create Game/Join Game) stay untimed. turnStartedAt
+             * stays null until join-room.js starts the clock, since white
+             * can't be "on the clock" while nobody has joined yet. */
+            timerEnabled: isPublic,
+            whiteTimeLeftMs: isPublic ? room.PUBLIC_TIME_CONTROL_MS : null,
+            blackTimeLeftMs: isPublic ? room.PUBLIC_TIME_CONTROL_MS : null,
+            turnStartedAt: null
         });
 
         if (isPublic) { await room.addToPublicList(code); }

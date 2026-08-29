@@ -88,7 +88,8 @@ vercel.json          Static hosting config with light caching headers for the as
 ## Features
 
 - **Splash screen** with three modes: **2 Player** (pass-and-play),
-  **Play vs Computer** (Easy / Medium / Hard), and **Play Online**.
+  **Play vs Computer** (six Elo-labeled levels, 400 to 2400), and
+  **Play Online**.
 - Full chess rules: castling (both sides), en passant, pawn promotion
   (choose queen/rook/bishop/knight), check/checkmate/stalemate detection,
   draw by insufficient material or the 50-move rule, draw by threefold
@@ -110,7 +111,8 @@ Two ways to find an opponent, both under **Play Online**:
 - **Public Server Play** — no code needed. **Create Room** puts you in an
   open lobby anyone can find; **Join Room** shows a live list of everyone
   currently waiting, tap one to join it. The list polls every 3s while
-  you're browsing it.
+  you're browsing it. Public games are timed: **10 minutes per side** -
+  run out and you lose on time. Create Game/Join Game stay untimed.
 
 Either way, the board updates automatically for both sides once a game
 starts — no manual refresh.

@@ -13,10 +13,20 @@
 var SPRITE_COL = { k: '0%', q: '20%', b: '40%', n: '60%', r: '80%', p: '100%' };
 var SPRITE_ROW = { w: '0%', b: '100%' };
 
+/* Difficulty levels labeled with an approximate Elo rating, chess.com-style.
+ * These aren't a precisely calibrated rating (this is a plain alpha-beta
+ * searcher, not a neural-net engine tuned against real player data) - the
+ * numbers are a familiar, easy-to-compare way to communicate the same
+ * depth/time/randomness knobs the engine has always used. Randomness above
+ * 0 occasionally has the "wrong" (non-best) move chosen so low levels are
+ * genuinely beatable rather than just shallow-but-perfect. */
 var DIFFICULTY_CONFIGS = {
-    easy: { maxDepth: 1, timeLimit: 400, randomness: 0.35 },
-    medium: { maxDepth: 2, timeLimit: 900, randomness: 0.08 },
-    hard: { maxDepth: 4, timeLimit: 1800, randomness: 0 }
+    400: { maxDepth: 1, timeLimit: 300, randomness: 0.60 },
+    800: { maxDepth: 1, timeLimit: 400, randomness: 0.35 },
+    1200: { maxDepth: 2, timeLimit: 600, randomness: 0.18 },
+    1600: { maxDepth: 2, timeLimit: 900, randomness: 0.06 },
+    2000: { maxDepth: 3, timeLimit: 1200, randomness: 0.02 },
+    2400: { maxDepth: 4, timeLimit: 1800, randomness: 0 }
 };
 
 var currentState = null;
@@ -25,7 +35,7 @@ var selectedSquare = null;
 var pendingPromotionMoves = null;
 var mode = null; /* '2p', 'ai', or 'online' */
 var aiColor = 'b';
-var currentLevel = 'medium';
+var currentLevel = 1200;
 var flipped = false;
 var historyStack = [];
 var positionCounts = {};
@@ -41,6 +51,17 @@ var onlineToken = null;
 var onlineColor = null;
 var onlineAppliedMoveCount = 0;
 
+/* Chess clock state (Public Server Play only). clockWhiteMs/clockBlackMs
+ * are the snapshot each side had AS OF clockTurnStartedAt - the side whose
+ * turn it is has theirs still ticking down locally between polls, via
+ * clockTickTimer, so the display doesn't visibly freeze for 1.5s at a time. */
+var onlineTimerEnabled = false;
+var clockWhiteMs = 0;
+var clockBlackMs = 0;
+var clockTurnStartedAt = null;
+var clockTickTimer = null;
+var clockTimeoutFetchFired = false;
+
 function setText(el, str) {
     if (el.textContent !== undefined) { el.textContent = str; }
     else { el.innerText = str; }
@@ -48,6 +69,7 @@ function setText(el, str) {
 
 function showScreen(name) {
     OnlineClient.stopPolling();
+    stopClockTick();
     document.getElementById('splash-screen').style.display = (name === 'splash') ? 'block' : 'none';
     document.getElementById('difficulty-screen').style.display = (name === 'difficulty') ? 'block' : 'none';
     document.getElementById('online-menu-screen').style.display = (name === 'online-menu') ? 'block' : 'none';
@@ -124,9 +146,11 @@ function sizeBoard() {
 
     var statusBar = document.getElementById('status-bar');
     var controls = document.getElementById('controls');
+    var clocks = document.getElementById('chess-clocks');
     var statusH = (statusBar && statusBar.offsetHeight) || 30;
     var controlsH = (controls && controls.offsetHeight) || 60;
-    var reserved = statusH + controlsH + 40; /* margins/padding breathing room */
+    var clocksH = (clocks && clocks.offsetHeight) || 0; /* 0 when hidden (display:none) */
+    var reserved = statusH + controlsH + clocksH + 40; /* margins/padding breathing room */
 
     var availableW = vw - 12;
     var availableH = vh - reserved;
@@ -346,7 +370,7 @@ function startGame(selectedMode, level) {
     mode = selectedMode;
     if (mode === 'ai') {
         aiColor = 'b';
-        currentLevel = level || 'medium';
+        currentLevel = level || 1200;
     }
     currentState = ChessEngine.createInitialState();
     historyStack = [];
@@ -488,7 +512,10 @@ function beginOnlineGame() {
     updateBoardDisplay();
     updateStatusText();
     applyModeControlVisibility();
+    onlineTimerEnabled = false;
+    clockTimeoutFetchFired = false;
     showScreen('game');
+    startClockTick();
     OnlineClient.startPolling(function (cb) { OnlineClient.fetchState(onlineRoom, cb); }, 1500, onOnlineGameUpdate);
 }
 
@@ -531,16 +558,20 @@ function applyServerState(data) {
     recomputeLegalMoves();
     updateBoardDisplay();
 
+    applyTimerFields(data);
+
     var localStatus = ChessEngine.getStatus(currentState, currentLegalMoves);
     if (data.status === 'finished') {
         if (!gameOver) {
             gameOver = true;
             OnlineClient.stopPolling();
+            stopClockTick();
             showGameOver(onlineResultMessage(data.result));
         }
     } else if (isThreefoldRepetition() && !gameOver) {
         gameOver = true;
         OnlineClient.stopPolling();
+        stopClockTick();
         showGameOver('Draw by repetition');
     } else {
         updateStatusText(localStatus);
@@ -551,6 +582,8 @@ function onlineResultMessage(result) {
     var messages = {
         white_wins_checkmate: 'White wins by checkmate',
         black_wins_checkmate: 'Black wins by checkmate',
+        white_wins_timeout: 'White wins on time',
+        black_wins_timeout: 'Black wins on time',
         draw_stalemate: 'Draw by stalemate',
         draw_50move: 'Draw (50-move rule)',
         draw_material: 'Draw (insufficient material)'
@@ -558,15 +591,101 @@ function onlineResultMessage(result) {
     return messages[result] || 'Game over';
 }
 
+/* ---- chess clock (Public Server Play only) ---- */
+
+/* Called from every poll response, not just ones where the move count
+ * changed - the very first poll after a game starts has zero moves either
+ * way, and that's exactly when the clock needs its initial values, so this
+ * can't be folded into the "did anything change" check applyServerState
+ * uses for the board/selection state. */
+function applyTimerFields(data) {
+    if (!data.timerEnabled) { return; }
+    onlineTimerEnabled = true;
+    clockWhiteMs = data.whiteTimeLeftMs;
+    clockBlackMs = data.blackTimeLeftMs;
+    clockTurnStartedAt = data.turnStartedAt;
+    clockTimeoutFetchFired = false;
+    updateClockDisplay();
+}
+
+function formatClock(ms) {
+    if (ms < 0) { ms = 0; }
+    var totalSec = Math.floor(ms / 1000);
+    var m = Math.floor(totalSec / 60);
+    var s = totalSec % 60;
+    return m + ':' + (s < 10 ? '0' : '') + s;
+}
+
+function updateClockDisplay() {
+    var box = document.getElementById('chess-clocks');
+    if (!onlineTimerEnabled) { box.style.display = 'none'; return; }
+    box.style.display = 'block';
+
+    var whiteMs = clockWhiteMs;
+    var blackMs = clockBlackMs;
+    if (clockTurnStartedAt && !gameOver) {
+        var elapsed = Date.now() - clockTurnStartedAt;
+        if (currentState.turn === 'w') { whiteMs -= elapsed; } else { blackMs -= elapsed; }
+    }
+    if (whiteMs < 0) { whiteMs = 0; }
+    if (blackMs < 0) { blackMs = 0; }
+
+    setText(document.getElementById('clock-white'), formatClock(whiteMs));
+    setText(document.getElementById('clock-black'), formatClock(blackMs));
+
+    var whiteBox = document.getElementById('clock-white-box');
+    var blackBox = document.getElementById('clock-black-box');
+    whiteBox.className = 'clock-box' + (currentState.turn === 'w' && !gameOver ? ' clock-active' : '') + (whiteMs < 30000 ? ' clock-low' : '');
+    blackBox.className = 'clock-box' + (currentState.turn === 'b' && !gameOver ? ' clock-active' : '') + (blackMs < 30000 ? ' clock-low' : '');
+
+    /* Don't wait for the next 1.5s poll to notice a local countdown hit
+     * zero - ask the server right away so both sides see the timeout
+     * result as soon as possible. The server's reply is still what
+     * actually ends the game (via applyServerState), this just triggers
+     * that check sooner than the regular poll interval would. */
+    var sideOnClockMs = (currentState.turn === 'w') ? whiteMs : blackMs;
+    if (sideOnClockMs <= 0 && !gameOver && !clockTimeoutFetchFired) {
+        clockTimeoutFetchFired = true;
+        OnlineClient.fetchState(onlineRoom, function (err, data) {
+            if (!err && data) { applyServerState(data); }
+        });
+    }
+}
+
+function startClockTick() {
+    stopClockTick();
+    clockTickTimer = setInterval(updateClockDisplay, 500);
+}
+
+function stopClockTick() {
+    if (clockTickTimer) { clearInterval(clockTickTimer); clockTickTimer = null; }
+}
+
 function onOnlineGameUpdate(err, data) {
     if (err || !data) { return; } /* transient network hiccup - just retry next tick */
+    applyTimerFields(data);
     if (data.moves.length !== onlineAppliedMoveCount || (data.status === 'finished' && !gameOver)) {
         applyServerState(data);
     }
 }
 
 function commitOnlineMove(mv) {
+    var moverColor = currentState.turn; /* before commitMove flips it to the opponent */
     commitMove(mv); /* optimistic local apply for instant feedback */
+
+    /* Mirror the server's own clock bookkeeping locally so the display
+     * doesn't jump: without this, updateClockDisplay would compute the
+     * new side-to-move's elapsed time from the *previous* turnStartedAt
+     * (i.e. since the move-before-last), making their clock appear to
+     * suddenly drop by however long the side who just moved was thinking. */
+    if (onlineTimerEnabled && clockTurnStartedAt) {
+        var elapsedByMover = Date.now() - clockTurnStartedAt;
+        if (moverColor === 'w') { clockWhiteMs = Math.max(0, clockWhiteMs - elapsedByMover); }
+        else { clockBlackMs = Math.max(0, clockBlackMs - elapsedByMover); }
+        clockTurnStartedAt = Date.now();
+    }
+    updateClockDisplay();
+
     var sent = { from: mv.from, to: mv.to, promotion: mv.promotion || null };
     OnlineClient.sendMove(onlineRoom, onlineToken, sent, function (err) {
         if (!err) { return; }
@@ -607,9 +726,12 @@ function init() {
     document.getElementById('btn-vs-ai').onclick = function () { showScreen('difficulty'); };
     document.getElementById('btn-diff-back').onclick = function () { showScreen('splash'); };
 
-    document.getElementById('btn-diff-easy').onclick = function () { startGame('ai', 'easy'); };
-    document.getElementById('btn-diff-medium').onclick = function () { startGame('ai', 'medium'); };
-    document.getElementById('btn-diff-hard').onclick = function () { startGame('ai', 'hard'); };
+    document.getElementById('btn-diff-400').onclick = function () { startGame('ai', 400); };
+    document.getElementById('btn-diff-800').onclick = function () { startGame('ai', 800); };
+    document.getElementById('btn-diff-1200').onclick = function () { startGame('ai', 1200); };
+    document.getElementById('btn-diff-1600').onclick = function () { startGame('ai', 1600); };
+    document.getElementById('btn-diff-2000').onclick = function () { startGame('ai', 2000); };
+    document.getElementById('btn-diff-2400').onclick = function () { startGame('ai', 2400); };
 
     document.getElementById('btn-new').onclick = function () { startGame(mode, currentLevel); };
     document.getElementById('btn-undo').onclick = function () { undoMove(); };

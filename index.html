@@ -102,10 +102,14 @@
 <div id="difficulty-screen" class="screen" style="display:none;">
     <div class="splash-inner">
         <h2>Choose Difficulty</h2>
+        <p class="hint">Approximate Elo rating &mdash; higher plays stronger.</p>
         <div class="menu-buttons">
-            <a href="javascript:void(0)" class="big-btn" id="btn-diff-easy">Easy</a>
-            <a href="javascript:void(0)" class="big-btn" id="btn-diff-medium">Medium</a>
-            <a href="javascript:void(0)" class="big-btn" id="btn-diff-hard">Hard</a>
+            <a href="javascript:void(0)" class="big-btn" id="btn-diff-400">400 &middot; Beginner</a>
+            <a href="javascript:void(0)" class="big-btn" id="btn-diff-800">800 &middot; Casual</a>
+            <a href="javascript:void(0)" class="big-btn" id="btn-diff-1200">1200 &middot; Intermediate</a>
+            <a href="javascript:void(0)" class="big-btn" id="btn-diff-1600">1600 &middot; Advanced</a>
+            <a href="javascript:void(0)" class="big-btn" id="btn-diff-2000">2000 &middot; Expert</a>
+            <a href="javascript:void(0)" class="big-btn" id="btn-diff-2400">2400 &middot; Master</a>
         </div>
         <a href="javascript:void(0)" class="text-link" id="btn-diff-back">&laquo; Back</a>
     </div>
@@ -115,6 +119,11 @@
 <div id="game-screen" class="screen" style="display:none;">
     <div id="status-bar">
         <span id="status-text">White to move</span>
+    </div>
+
+    <div id="chess-clocks" style="display:none;">
+        <span class="clock-box" id="clock-white-box">White <span id="clock-white">10:00</span></span>
+        <span class="clock-box" id="clock-black-box">Black <span id="clock-black">10:00</span></span>
     </div>
 
     <div id="board-wrap">
