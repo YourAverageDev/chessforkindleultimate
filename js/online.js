@@ -41,6 +41,29 @@ var OnlineClient = (function () {
         request('POST', '/api/cancel-room', { room: code, token: token }, callback);
     }
 
+    /* Best-effort cleanup for the tab-closing/navigating-away case, where
+     * there's no time for a normal async XHR round trip to complete.
+     * navigator.sendBeacon is built for exactly this (guaranteed to be
+     * sent even after the page is gone) but is a newer API; a synchronous
+     * XHR is the old-fashioned equivalent and is one of the few remaining
+     * legitimate uses for one, so it's a reasonable fallback for browsers
+     * (old Kindle included) that predate sendBeacon. */
+    function cancelRoomBeacon(code, token) {
+        var payload = JSON.stringify({ room: code, token: token });
+        if (navigator.sendBeacon) {
+            try {
+                var sent = navigator.sendBeacon('/api/cancel-room', new Blob([payload], { type: 'application/json' }));
+                if (sent) { return; }
+            } catch (e) { /* fall through to sync XHR */ }
+        }
+        try {
+            var xhr = new XMLHttpRequest();
+            xhr.open('POST', '/api/cancel-room', false);
+            xhr.setRequestHeader('Content-Type', 'application/json');
+            xhr.send(payload);
+        } catch (e) { /* best effort only - nothing more we can do on unload */ }
+    }
+
     function sendMove(code, token, move, callback) {
         request('POST', '/api/move', { room: code, token: token, from: move.from, to: move.to, promotion: move.promotion || null }, callback);
     }
@@ -85,6 +108,7 @@ var OnlineClient = (function () {
         createRoom: createRoom,
         joinRoom: joinRoom,
         cancelRoom: cancelRoom,
+        cancelRoomBeacon: cancelRoomBeacon,
         sendMove: sendMove,
         fetchState: fetchState,
         listPublicRooms: listPublicRooms,

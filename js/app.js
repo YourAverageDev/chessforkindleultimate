@@ -655,6 +655,16 @@ function init() {
     };
     window.onorientationchange = window.onresize;
 
+    /* Covers leaving the waiting screen by closing the tab, navigating
+     * away, or reloading - not just clicking Cancel. Only the room's
+     * creator (not yet joined by anyone) is cleaned up here; an active
+     * game is left alone. */
+    window.onbeforeunload = function () {
+        if (onlineRoom && onlineToken && document.getElementById('online-waiting-screen').style.display !== 'none') {
+            OnlineClient.cancelRoomBeacon(onlineRoom, onlineToken);
+        }
+    };
+
     showScreen('splash');
 }
 
