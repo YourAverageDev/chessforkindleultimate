@@ -1,0 +1,27 @@
+var room = require('./_room.js');
+
+module.exports = async function handler(req, res) {
+    if (req.method !== 'POST') {
+        return room.sendJson(res, 405, { error: 'method_not_allowed' });
+    }
+
+    try {
+        var code = await room.createRoomCode();
+        var token = room.randomToken();
+        var now = Date.now();
+
+        await room.saveRoom(code, {
+            moves: [],
+            whiteToken: token,
+            blackToken: null,
+            status: 'waiting',
+            result: null,
+            createdAt: now,
+            lastMoveAt: now
+        });
+
+        return room.sendJson(res, 200, { room: code, token: token, color: 'w' });
+    } catch (err) {
+        return room.sendJson(res, 500, { error: 'server_error', message: String(err && err.message || err) });
+    }
+};

@@ -362,7 +362,7 @@ var ChessEngine = (function () {
         return parts.join('') + '|' + state.turn + '|' + (c.wK ? 1 : 0) + (c.wQ ? 1 : 0) + (c.bK ? 1 : 0) + (c.bQ ? 1 : 0) + '|' + (state.ep === null ? 'x' : state.ep);
     }
 
-    return {
+    var api = {
         createInitialState: createInitialState,
         generateLegalMoves: generateLegalMoves,
         makeMove: makeMove,
@@ -374,4 +374,13 @@ var ChessEngine = (function () {
         positionKey: positionKey,
         otherColor: otherColor
     };
+
+    /* Also usable from Node (api/*.js serverless functions use this same
+     * engine to validate online-play moves server-side) without affecting
+     * the browser global assignment above. */
+    if (typeof module !== 'undefined' && module.exports) {
+        module.exports = api;
+    }
+
+    return api;
 })();

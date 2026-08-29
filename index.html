@@ -24,8 +24,48 @@
         <div class="menu-buttons">
             <a href="javascript:void(0)" class="big-btn" id="btn-2p">2 Player Mode</a>
             <a href="javascript:void(0)" class="big-btn" id="btn-vs-ai">Play vs Computer</a>
+            <a href="javascript:void(0)" class="big-btn" id="btn-online">Play Online</a>
         </div>
         <p class="hint">Tap a piece, then tap where it should go.</p>
+    </div>
+</div>
+
+<!-- ONLINE MENU -->
+<div id="online-menu-screen" class="screen" style="display:none;">
+    <div class="splash-inner">
+        <h2>Play Online</h2>
+        <div class="menu-buttons">
+            <a href="javascript:void(0)" class="big-btn" id="btn-online-create">Create Game</a>
+            <a href="javascript:void(0)" class="big-btn" id="btn-online-join">Join Game</a>
+        </div>
+        <p class="error-text" id="online-menu-error"></p>
+        <a href="javascript:void(0)" class="text-link" id="btn-online-back">&laquo; Back</a>
+    </div>
+</div>
+
+<!-- ONLINE JOIN (enter a room code) -->
+<div id="online-join-screen" class="screen" style="display:none;">
+    <div class="splash-inner">
+        <h2>Join Game</h2>
+        <p class="hint">Enter the code your opponent shared with you.</p>
+        <input type="text" id="online-code-input" class="code-input" maxlength="5" autocapitalize="characters" autocomplete="off">
+        <div class="menu-buttons">
+            <a href="javascript:void(0)" class="big-btn" id="btn-online-join-submit">Join</a>
+        </div>
+        <p class="error-text" id="online-join-error"></p>
+        <a href="javascript:void(0)" class="text-link" id="btn-online-join-back">&laquo; Back</a>
+    </div>
+</div>
+
+<!-- ONLINE WAITING FOR OPPONENT -->
+<div id="online-waiting-screen" class="screen" style="display:none;">
+    <div class="splash-inner">
+        <h2>Waiting for opponent&hellip;</h2>
+        <p class="hint">Share this code with the person you want to play:</p>
+        <div class="room-code" id="online-room-code">-----</div>
+        <p class="hint">The game starts automatically once they join.</p>
+        <p class="error-text" id="online-waiting-error"></p>
+        <a href="javascript:void(0)" class="text-link" id="btn-online-cancel">&laquo; Cancel</a>
     </div>
 </div>
 
@@ -84,6 +124,7 @@
 
 <script src="js/chessEngine.js"></script>
 <script src="js/ai.js"></script>
+<script src="js/online.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

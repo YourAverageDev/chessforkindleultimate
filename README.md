@@ -67,19 +67,26 @@ white,black) is the only change that would take.
 ## Project structure
 
 ```
-index.html          Markup for all screens (splash, difficulty, board, overlays)
+index.html          Markup for all screens (splash, difficulty, board, online, overlays)
 css/style.css        Flat-color, table/block layout styling, no gradients/flex/grid
 js/chessEngine.js    Pure rules engine: legal moves, check/mate/stalemate, castling,
-                     en passant, promotion, draw detection
+                     en passant, promotion, draw detection (also used from Node - see below)
 js/ai.js             Iterative-deepening alpha-beta search used for "Play vs Computer"
+js/online.js         XHR client for the /api online-play routes (polling, no WebSockets)
 js/app.js            UI controller: screens, board rendering, click handling, game flow
+api/_room.js          Shared server-side helpers (Redis REST calls, room/token/replay logic)
+api/create-room.js    POST - creates a room, returns a room code + your player token
+api/join-room.js      POST - joins an existing room as the second player
+api/move.js           POST - validates and applies a move server-side (turn + legality checks)
+api/state.js          GET  - polled by both clients for the room's current move list/status
+package.json         No runtime dependencies; just pins the Node 18+ function runtime
 vercel.json          Static hosting config with light caching headers for the assets
 ```
 
 ## Features
 
-- **Splash screen** with two modes: **2 Player** (pass-and-play) and
-  **Play vs Computer** (Easy / Medium / Hard).
+- **Splash screen** with three modes: **2 Player** (pass-and-play),
+  **Play vs Computer** (Easy / Medium / Hard), and **Play Online**.
 - Full chess rules: castling (both sides), en passant, pawn promotion
   (choose queen/rook/bishop/knight), check/checkmate/stalemate detection,
   draw by insufficient material or the 50-move rule, draw by threefold
@@ -88,21 +95,65 @@ vercel.json          Static hosting config with light caching headers for the as
   highlighted, tap a destination to move.
 - Undo (steps back one full turn in AI mode so it's always your move
   again), flip board, new game, and a menu button.
-- Responsive board sizing via a couple of `@media` breakpoints, from small
-  e-ink screens up to tablet-sized Fire displays.
+- The board is sized in JS from the device's actual viewport (not a fixed
+  CSS size), so it fills the screen on whatever Kindle/tablet it's running
+  on, and re-sizes on rotation.
+
+### Online play
+
+Create a game to get a 5-character room code, share it with another
+person, and they join with **Play Online → Join Game**. The board updates
+automatically for both sides — no manual refresh.
+
+This deliberately does not use WebSockets: old Kindle browsers are
+unreliable WebSocket clients, so instead each browser just polls a small
+serverless API (`/api/state`) every 1.5s with plain `XMLHttpRequest`, which
+has worked on every browser for decades. All moves are validated
+server-side by the exact same rules engine the client uses
+(`js/chessEngine.js`, reused from Node via `module.exports`) before being
+accepted, so a modified/buggy client can't play an illegal move or move on
+the other player's turn — the server's move list is always the source of
+truth, and each client replays it fresh whenever it changes.
+
+**Setup required for online play to work once deployed:** the API routes
+need a place to store room state. In the Vercel dashboard, open the
+project → **Storage** tab → create a database → choose the Redis-backed
+option (marketed as "Vercel KV" / an Upstash Redis integration) → connect
+it to this project. That's it — Vercel injects the `KV_REST_API_URL` /
+`KV_REST_API_TOKEN` environment variables automatically, and `api/_room.js`
+picks them up (or the `UPSTASH_REDIS_REST_URL` / `_TOKEN` names, if you
+connect Upstash directly instead) with no code changes and no npm
+dependency. Without a KV store connected, the 2 Player and vs Computer
+modes work fine, but Online Play will show a "Something went wrong" error
+when creating or joining a room.
 
 ## Running locally
 
-No build step — it's static files. From the project root:
+The **2 Player** and **vs Computer** modes are static files, no server
+logic needed:
 
 ```bash
 python3 -m http.server 8000
 # open http://localhost:8000
 ```
 
+**Online play** needs the `/api` serverless functions to actually run,
+which a plain static file server doesn't provide. Use the Vercel CLI's
+local dev server instead (emulates the functions and reads a linked
+project's KV credentials into `.env.local`):
+
+```bash
+npm i -g vercel
+vercel link      # links this directory to your Vercel project
+vercel env pull  # pulls the KV_REST_API_* vars into .env.local
+vercel dev
+```
+
 ## Deploying to Vercel
 
-This is a plain static site, so Vercel needs no framework preset:
+This is a static site with a few serverless functions under `/api`, so
+Vercel needs no framework preset — it auto-detects `/api/*.js` as Node
+functions:
 
 ```bash
 vercel --prod
@@ -110,6 +161,7 @@ vercel --prod
 
 or connect the repo in the Vercel dashboard with the framework preset set
 to "Other" — no build command or output directory overrides are required.
+Remember the Storage step above if you want Online Play to work.
 
 ## Known limitations
 
@@ -119,3 +171,7 @@ to "Other" — no build command or output directory overrides are required.
   special-cased (still correctly plays on rather than misdetecting a draw).
 - In "Play vs Computer" mode you always play White; there's no color
   picker (kept out to match the minimal, few-taps UI this was modeled on).
+- Online play has no resign/draw-offer button, no reconnect-with-a-new-
+  device support (the player token lives only in that browser tab's
+  memory), and abandoned rooms simply expire after 6 hours rather than
+  being cleaned up immediately.

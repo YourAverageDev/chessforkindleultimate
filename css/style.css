@@ -99,6 +99,41 @@ html, body {
     font-size: 15px;
 }
 
+.error-text {
+    color: #b02a2a;
+    font-size: 14px;
+    font-weight: bold;
+    min-height: 18px;
+    margin: 10px 0 0 0;
+}
+
+.code-input {
+    display: block;
+    width: 200px;
+    margin: 14px auto 0 auto;
+    padding: 12px;
+    font-size: 28px;
+    font-weight: bold;
+    letter-spacing: 8px;
+    text-align: center;
+    text-transform: uppercase;
+    border: 2px solid #222222;
+    color: #111111;
+    background: #ffffff;
+}
+
+.room-code {
+    display: inline-block;
+    margin: 16px auto;
+    padding: 14px 24px;
+    font-size: 40px;
+    font-weight: bold;
+    letter-spacing: 10px;
+    border: 3px solid #222222;
+    background: #f5f5e8;
+    color: #111111;
+}
+
 /* ---- game screen ---- */
 
 #status-bar {

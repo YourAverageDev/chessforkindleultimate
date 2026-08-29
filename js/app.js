@@ -23,7 +23,7 @@ var currentState = null;
 var currentLegalMoves = [];
 var selectedSquare = null;
 var pendingPromotionMoves = null;
-var mode = null; /* '2p' or 'ai' */
+var mode = null; /* '2p', 'ai', or 'online' */
 var aiColor = 'b';
 var currentLevel = 'medium';
 var flipped = false;
@@ -32,17 +32,44 @@ var positionCounts = {};
 var lastMove = null;
 var gameOver = false;
 
+/* Online play state. onlineColor is which side this browser is playing;
+ * onlineAppliedMoveCount tracks how many of the server's authoritative
+ * moves have been applied locally, so polling only has to notice "the
+ * count changed" rather than diff move lists. */
+var onlineRoom = null;
+var onlineToken = null;
+var onlineColor = null;
+var onlineAppliedMoveCount = 0;
+
 function setText(el, str) {
     if (el.textContent !== undefined) { el.textContent = str; }
     else { el.innerText = str; }
 }
 
 function showScreen(name) {
+    OnlineClient.stopPolling();
     document.getElementById('splash-screen').style.display = (name === 'splash') ? 'block' : 'none';
     document.getElementById('difficulty-screen').style.display = (name === 'difficulty') ? 'block' : 'none';
+    document.getElementById('online-menu-screen').style.display = (name === 'online-menu') ? 'block' : 'none';
+    document.getElementById('online-join-screen').style.display = (name === 'online-join') ? 'block' : 'none';
+    document.getElementById('online-waiting-screen').style.display = (name === 'online-waiting') ? 'block' : 'none';
     document.getElementById('game-screen').style.display = (name === 'game') ? 'block' : 'none';
     hideOverlay('promo-overlay');
     hideOverlay('gameover-overlay');
+}
+
+function setMessage(id, msg) {
+    setText(document.getElementById(id), msg || '');
+}
+
+function describeRequestError(err) {
+    if (!err) { return 'Something went wrong. Please try again.'; }
+    if (err.network) { return 'Network error — check your connection.'; }
+    var code = err.data && err.data.error;
+    if (code === 'room_not_found') { return 'Room not found.'; }
+    if (code === 'room_full') { return 'That room already has two players.'; }
+    if (err.data && err.data.message) { return err.data.message; }
+    return 'Something went wrong. Please try again.';
 }
 
 function hideOverlay(id) {
@@ -178,9 +205,12 @@ function isThreefoldRepetition() {
 function updateStatusText(status) {
     status = status || ChessEngine.getStatus(currentState, currentLegalMoves);
     var turnName = currentState.turn === 'w' ? 'White' : 'Black';
+    var checkSuffix = (status === 'check') ? ' — Check!' : '';
     var text;
     if (mode === 'ai' && currentState.turn === aiColor && !gameOver) {
         text = 'Computer is thinking...';
+    } else if (mode === 'online' && !gameOver) {
+        text = (currentState.turn === onlineColor ? 'Your move' : "Waiting for opponent's move") + checkSuffix;
     } else if (status === 'check') {
         text = turnName + ' to move — Check!';
     } else {
@@ -273,12 +303,14 @@ function pickPromotion(pieceType) {
     }
     pendingPromotionMoves = null;
     hideOverlay('promo-overlay');
-    if (chosen) { commitMove(chosen); }
+    if (!chosen) { return; }
+    if (mode === 'online') { commitOnlineMove(chosen); } else { commitMove(chosen); }
 }
 
 function onSquareClick(idx) {
     if (gameOver) { return; }
     if (mode === 'ai' && currentState.turn === aiColor) { return; }
+    if (mode === 'online' && currentState.turn !== onlineColor) { return; }
 
     var piece = currentState.board[idx];
 
@@ -288,7 +320,10 @@ function onSquareClick(idx) {
             var mv = currentLegalMoves[i];
             if (mv.from === selectedSquare && mv.to === idx) { matches.push(mv); }
         }
-        if (matches.length === 1) { commitMove(matches[0]); return; }
+        if (matches.length === 1) {
+            if (mode === 'online') { commitOnlineMove(matches[0]); } else { commitMove(matches[0]); }
+            return;
+        }
         if (matches.length > 1) { showPromotionPicker(matches); return; }
 
         if (piece && piece.color === currentState.turn) { selectSquare(idx); return; }
@@ -297,6 +332,12 @@ function onSquareClick(idx) {
     }
 
     if (piece && piece.color === currentState.turn) { selectSquare(idx); }
+}
+
+function applyModeControlVisibility() {
+    var isOnline = (mode === 'online');
+    document.getElementById('btn-new').style.display = isOnline ? 'none' : 'inline-block';
+    document.getElementById('btn-undo').style.display = isOnline ? 'none' : 'inline-block';
 }
 
 function startGame(selectedMode, level) {
@@ -316,10 +357,156 @@ function startGame(selectedMode, level) {
     buildBoardTable();
     updateBoardDisplay();
     updateStatusText();
+    applyModeControlVisibility();
     showScreen('game');
 }
 
+/* ---- online play ---- */
+
+function createOnlineGame() {
+    setMessage('online-menu-error', '');
+    OnlineClient.createRoom(function (err, data) {
+        if (err || !data) { setMessage('online-menu-error', describeRequestError(err)); return; }
+        onlineRoom = data.room;
+        onlineToken = data.token;
+        onlineColor = data.color;
+        setText(document.getElementById('online-room-code'), onlineRoom);
+        setMessage('online-waiting-error', '');
+        showScreen('online-waiting');
+        OnlineClient.startPolling(onlineRoom, 1500, onOnlineWaitingUpdate);
+    });
+}
+
+function onOnlineWaitingUpdate(err, data) {
+    if (err) { setMessage('online-waiting-error', describeRequestError(err)); return; }
+    setMessage('online-waiting-error', '');
+    if (data && data.blackPresent) {
+        OnlineClient.stopPolling();
+        beginOnlineGame();
+    }
+}
+
+function joinOnlineGame(rawCode) {
+    setMessage('online-join-error', '');
+    var code = (rawCode || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (!code) { setMessage('online-join-error', 'Enter a room code.'); return; }
+    OnlineClient.joinRoom(code, function (err, data) {
+        if (err || !data) { setMessage('online-join-error', describeRequestError(err)); return; }
+        onlineRoom = data.room;
+        onlineToken = data.token;
+        onlineColor = data.color;
+        beginOnlineGame();
+    });
+}
+
+function beginOnlineGame() {
+    mode = 'online';
+    currentState = ChessEngine.createInitialState();
+    historyStack = [];
+    positionCounts = {};
+    lastMove = null;
+    gameOver = false;
+    selectedSquare = null;
+    onlineAppliedMoveCount = 0;
+    flipped = (onlineColor === 'b');
+    recomputeLegalMoves();
+    recountPositions();
+    buildBoardTable();
+    updateBoardDisplay();
+    updateStatusText();
+    applyModeControlVisibility();
+    showScreen('game');
+    OnlineClient.startPolling(onlineRoom, 1500, onOnlineGameUpdate);
+}
+
+/* Replays the server's authoritative move list from scratch and updates
+ * all local UI state from it. Used both for normal polling updates (the
+ * opponent moved) and to recover if our own optimistic move ever gets
+ * rejected - either way, the server's move list wins. */
+function applyServerState(data) {
+    var state = ChessEngine.createInitialState();
+    var newLastMove = null;
+    var counts = {};
+
+    function tally(s) {
+        var key = ChessEngine.positionKey(s);
+        counts[key] = (counts[key] || 0) + 1;
+    }
+    tally(state);
+
+    for (var i = 0; i < data.moves.length; i++) {
+        var mv = data.moves[i];
+        var legal = ChessEngine.generateLegalMoves(state);
+        var found = null;
+        for (var j = 0; j < legal.length; j++) {
+            if (legal[j].from === mv.from && legal[j].to === mv.to && legal[j].promotion === (mv.promotion || null)) {
+                found = legal[j];
+                break;
+            }
+        }
+        if (!found) { break; }
+        state = ChessEngine.makeMove(state, found);
+        tally(state);
+        newLastMove = { from: mv.from, to: mv.to };
+    }
+
+    currentState = state;
+    lastMove = newLastMove;
+    positionCounts = counts;
+    onlineAppliedMoveCount = data.moves.length;
+    selectedSquare = null;
+    recomputeLegalMoves();
+    updateBoardDisplay();
+
+    var localStatus = ChessEngine.getStatus(currentState, currentLegalMoves);
+    if (data.status === 'finished') {
+        if (!gameOver) {
+            gameOver = true;
+            OnlineClient.stopPolling();
+            showGameOver(onlineResultMessage(data.result));
+        }
+    } else if (isThreefoldRepetition() && !gameOver) {
+        gameOver = true;
+        OnlineClient.stopPolling();
+        showGameOver('Draw by repetition');
+    } else {
+        updateStatusText(localStatus);
+    }
+}
+
+function onlineResultMessage(result) {
+    var messages = {
+        white_wins_checkmate: 'White wins by checkmate',
+        black_wins_checkmate: 'Black wins by checkmate',
+        draw_stalemate: 'Draw by stalemate',
+        draw_50move: 'Draw (50-move rule)',
+        draw_material: 'Draw (insufficient material)'
+    };
+    return messages[result] || 'Game over';
+}
+
+function onOnlineGameUpdate(err, data) {
+    if (err || !data) { return; } /* transient network hiccup - just retry next tick */
+    if (data.moves.length !== onlineAppliedMoveCount || (data.status === 'finished' && !gameOver)) {
+        applyServerState(data);
+    }
+}
+
+function commitOnlineMove(mv) {
+    commitMove(mv); /* optimistic local apply for instant feedback */
+    var sent = { from: mv.from, to: mv.to, promotion: mv.promotion || null };
+    OnlineClient.sendMove(onlineRoom, onlineToken, sent, function (err) {
+        if (!err) { return; }
+        /* Our optimistic move wasn't accepted (stale state, race, etc.) -
+         * fall back to whatever the server says actually happened. */
+        OnlineClient.fetchState(onlineRoom, function (err2, data2) {
+            if (!err2 && data2) { applyServerState(data2); }
+        });
+    });
+}
+
 function undoMove() {
+    if (mode === 'online') { return; }
     if (historyStack.length === 0) { return; }
     gameOver = false;
     hideOverlay('gameover-overlay');
@@ -356,13 +543,29 @@ function init() {
     document.getElementById('btn-flip').onclick = function () { flipBoard(); };
     document.getElementById('btn-menu').onclick = function () { showScreen('splash'); };
 
-    document.getElementById('btn-gameover-new').onclick = function () { startGame(mode, currentLevel); };
+    document.getElementById('btn-gameover-new').onclick = function () {
+        if (mode === 'online') { showScreen('online-menu'); } else { startGame(mode, currentLevel); }
+    };
     document.getElementById('btn-gameover-menu').onclick = function () { showScreen('splash'); };
 
     document.getElementById('promo-q').onclick = function () { pickPromotion('q'); };
     document.getElementById('promo-r').onclick = function () { pickPromotion('r'); };
     document.getElementById('promo-b').onclick = function () { pickPromotion('b'); };
     document.getElementById('promo-n').onclick = function () { pickPromotion('n'); };
+
+    document.getElementById('btn-online').onclick = function () { showScreen('online-menu'); };
+    document.getElementById('btn-online-back').onclick = function () { showScreen('splash'); };
+    document.getElementById('btn-online-create').onclick = function () { createOnlineGame(); };
+    document.getElementById('btn-online-join').onclick = function () {
+        setMessage('online-join-error', '');
+        document.getElementById('online-code-input').value = '';
+        showScreen('online-join');
+    };
+    document.getElementById('btn-online-join-back').onclick = function () { showScreen('online-menu'); };
+    document.getElementById('btn-online-join-submit').onclick = function () {
+        joinOnlineGame(document.getElementById('online-code-input').value);
+    };
+    document.getElementById('btn-online-cancel').onclick = function () { showScreen('online-menu'); };
 
     window.onresize = function () {
         if (document.getElementById('game-screen').style.display !== 'none') { sizeBoard(); }
