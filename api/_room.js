@@ -38,6 +38,8 @@ async function redisCommand(commandArray) {
 
 function roomKey(code) { return 'chessroom:' + code; }
 
+var PUBLIC_ROOMS_KEY = 'chessroom:public';
+
 async function getRoom(code) {
     var raw = await redisCommand(['GET', roomKey(code)]);
     if (!raw) { return null; }
@@ -46,6 +48,23 @@ async function getRoom(code) {
 
 async function saveRoom(code, room) {
     await redisCommand(['SET', roomKey(code), JSON.stringify(room), 'EX', ROOM_TTL_SECONDS]);
+}
+
+async function deleteRoom(code) {
+    await redisCommand(['DEL', roomKey(code)]);
+}
+
+async function addToPublicList(code) {
+    await redisCommand(['SADD', PUBLIC_ROOMS_KEY, code]);
+}
+
+async function removeFromPublicList(code) {
+    await redisCommand(['SREM', PUBLIC_ROOMS_KEY, code]);
+}
+
+async function listPublicRoomCodes() {
+    var codes = await redisCommand(['SMEMBERS', PUBLIC_ROOMS_KEY]);
+    return codes || [];
 }
 
 function randomCode() {
@@ -126,6 +145,10 @@ function sendJson(res, statusCode, obj) {
 module.exports = {
     getRoom: getRoom,
     saveRoom: saveRoom,
+    deleteRoom: deleteRoom,
+    addToPublicList: addToPublicList,
+    removeFromPublicList: removeFromPublicList,
+    listPublicRoomCodes: listPublicRoomCodes,
     createRoomCode: createRoomCode,
     randomToken: randomToken,
     replay: replay,

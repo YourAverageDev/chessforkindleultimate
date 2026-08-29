@@ -51,6 +51,8 @@ function showScreen(name) {
     document.getElementById('splash-screen').style.display = (name === 'splash') ? 'block' : 'none';
     document.getElementById('difficulty-screen').style.display = (name === 'difficulty') ? 'block' : 'none';
     document.getElementById('online-menu-screen').style.display = (name === 'online-menu') ? 'block' : 'none';
+    document.getElementById('online-public-screen').style.display = (name === 'online-public') ? 'block' : 'none';
+    document.getElementById('online-public-list-screen').style.display = (name === 'online-public-list') ? 'block' : 'none';
     document.getElementById('online-join-screen').style.display = (name === 'online-join') ? 'block' : 'none';
     document.getElementById('online-waiting-screen').style.display = (name === 'online-waiting') ? 'block' : 'none';
     document.getElementById('game-screen').style.display = (name === 'game') ? 'block' : 'none';
@@ -363,17 +365,18 @@ function startGame(selectedMode, level) {
 
 /* ---- online play ---- */
 
-function createOnlineGame() {
-    setMessage('online-menu-error', '');
-    OnlineClient.createRoom(function (err, data) {
-        if (err || !data) { setMessage('online-menu-error', describeRequestError(err)); return; }
+function createOnlineGame(isPublic, errorTargetId) {
+    var errorId = errorTargetId || 'online-menu-error';
+    setMessage(errorId, '');
+    OnlineClient.createRoom(isPublic, function (err, data) {
+        if (err || !data) { setMessage(errorId, describeRequestError(err)); return; }
         onlineRoom = data.room;
         onlineToken = data.token;
         onlineColor = data.color;
         setText(document.getElementById('online-room-code'), onlineRoom);
         setMessage('online-waiting-error', '');
         showScreen('online-waiting');
-        OnlineClient.startPolling(onlineRoom, 1500, onOnlineWaitingUpdate);
+        OnlineClient.startPolling(function (cb) { OnlineClient.fetchState(onlineRoom, cb); }, 1500, onOnlineWaitingUpdate);
     });
 }
 
@@ -386,12 +389,82 @@ function onOnlineWaitingUpdate(err, data) {
     }
 }
 
-function joinOnlineGame(rawCode) {
-    setMessage('online-join-error', '');
+function cancelOnlineWaitingRoom() {
+    if (onlineRoom && onlineToken) {
+        OnlineClient.cancelRoom(onlineRoom, onlineToken, function () {}); /* fire and forget */
+    }
+    showScreen('online-menu');
+}
+
+/* ---- public lobby ---- */
+
+function openPublicLobbyList() {
+    setMessage('online-public-list-error', '');
+    showScreen('online-public-list');
+    refreshPublicRoomList();
+    OnlineClient.startPolling(function (cb) { OnlineClient.listPublicRooms(cb); }, 3000, onPublicListUpdate);
+}
+
+function refreshPublicRoomList() {
+    OnlineClient.listPublicRooms(onPublicListUpdate);
+}
+
+function onPublicListUpdate(err, data) {
+    if (err || !data) { setMessage('online-public-list-error', describeRequestError(err)); return; }
+    setMessage('online-public-list-error', '');
+    renderPublicRoomList(data.rooms || []);
+}
+
+function renderPublicRoomList(rooms) {
+    var container = document.getElementById('public-room-list');
+    var emptyMsg = document.getElementById('public-room-list-empty');
+    container.innerHTML = '';
+
+    if (rooms.length === 0) {
+        emptyMsg.style.display = 'block';
+        return;
+    }
+    emptyMsg.style.display = 'none';
+
+    for (var i = 0; i < rooms.length; i++) {
+        var room = rooms[i];
+        var item = document.createElement('div');
+        item.className = 'room-list-item';
+
+        var codeEl = document.createElement('div');
+        codeEl.className = 'room-list-code';
+        setText(codeEl, room.room);
+        item.appendChild(codeEl);
+
+        var metaEl = document.createElement('div');
+        metaEl.className = 'room-list-meta';
+        var waitedSec = Math.max(0, Math.round((Date.now() - room.createdAt) / 1000));
+        setText(metaEl, 'Waiting ' + waitedSec + 's');
+        item.appendChild(metaEl);
+
+        var joinBtn = document.createElement('a');
+        joinBtn.href = 'javascript:void(0)';
+        joinBtn.className = 'room-list-join-btn';
+        setText(joinBtn, 'Join');
+        joinBtn.setAttribute('onclick', 'joinPublicRoom(\'' + room.room + '\')');
+        item.appendChild(joinBtn);
+
+        container.appendChild(item);
+    }
+}
+
+function joinPublicRoom(code) {
+    OnlineClient.stopPolling();
+    joinOnlineGame(code, 'online-public-list-error');
+}
+
+function joinOnlineGame(rawCode, errorTargetId) {
+    var errorId = errorTargetId || 'online-join-error';
+    setMessage(errorId, '');
     var code = (rawCode || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
-    if (!code) { setMessage('online-join-error', 'Enter a room code.'); return; }
+    if (!code) { setMessage(errorId, 'Enter a room code.'); return; }
     OnlineClient.joinRoom(code, function (err, data) {
-        if (err || !data) { setMessage('online-join-error', describeRequestError(err)); return; }
+        if (err || !data) { setMessage(errorId, describeRequestError(err)); return; }
         onlineRoom = data.room;
         onlineToken = data.token;
         onlineColor = data.color;
@@ -416,7 +489,7 @@ function beginOnlineGame() {
     updateStatusText();
     applyModeControlVisibility();
     showScreen('game');
-    OnlineClient.startPolling(onlineRoom, 1500, onOnlineGameUpdate);
+    OnlineClient.startPolling(function (cb) { OnlineClient.fetchState(onlineRoom, cb); }, 1500, onOnlineGameUpdate);
 }
 
 /* Replays the server's authoritative move list from scratch and updates
@@ -555,7 +628,7 @@ function init() {
 
     document.getElementById('btn-online').onclick = function () { showScreen('online-menu'); };
     document.getElementById('btn-online-back').onclick = function () { showScreen('splash'); };
-    document.getElementById('btn-online-create').onclick = function () { createOnlineGame(); };
+    document.getElementById('btn-online-create').onclick = function () { createOnlineGame(false); };
     document.getElementById('btn-online-join').onclick = function () {
         setMessage('online-join-error', '');
         document.getElementById('online-code-input').value = '';
@@ -565,7 +638,17 @@ function init() {
     document.getElementById('btn-online-join-submit').onclick = function () {
         joinOnlineGame(document.getElementById('online-code-input').value);
     };
-    document.getElementById('btn-online-cancel').onclick = function () { showScreen('online-menu'); };
+    document.getElementById('btn-online-cancel').onclick = function () { cancelOnlineWaitingRoom(); };
+
+    document.getElementById('btn-online-public').onclick = function () {
+        setMessage('online-public-error', '');
+        showScreen('online-public');
+    };
+    document.getElementById('btn-public-back').onclick = function () { showScreen('online-menu'); };
+    document.getElementById('btn-public-create').onclick = function () { createOnlineGame(true, 'online-public-error'); };
+    document.getElementById('btn-public-join').onclick = function () { openPublicLobbyList(); };
+    document.getElementById('btn-public-list-back').onclick = function () { showScreen('online-public'); };
+    document.getElementById('btn-public-refresh').onclick = function () { refreshPublicRoomList(); };
 
     window.onresize = function () {
         if (document.getElementById('game-screen').style.display !== 'none') { sizeBoard(); }

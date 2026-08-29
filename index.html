@@ -37,9 +37,38 @@
         <div class="menu-buttons">
             <a href="javascript:void(0)" class="big-btn" id="btn-online-create">Create Game</a>
             <a href="javascript:void(0)" class="big-btn" id="btn-online-join">Join Game</a>
+            <a href="javascript:void(0)" class="big-btn" id="btn-online-public">Public Server Play</a>
         </div>
         <p class="error-text" id="online-menu-error"></p>
         <a href="javascript:void(0)" class="text-link" id="btn-online-back">&laquo; Back</a>
+    </div>
+</div>
+
+<!-- PUBLIC SERVER PLAY SUBMENU -->
+<div id="online-public-screen" class="screen" style="display:none;">
+    <div class="splash-inner">
+        <h2>Public Server Play</h2>
+        <p class="hint">Create an open room anyone can join, or join someone else's.</p>
+        <div class="menu-buttons">
+            <a href="javascript:void(0)" class="big-btn" id="btn-public-create">Create Room</a>
+            <a href="javascript:void(0)" class="big-btn" id="btn-public-join">Join Room</a>
+        </div>
+        <p class="error-text" id="online-public-error"></p>
+        <a href="javascript:void(0)" class="text-link" id="btn-public-back">&laquo; Back</a>
+    </div>
+</div>
+
+<!-- PUBLIC ROOM LIST -->
+<div id="online-public-list-screen" class="screen" style="display:none;">
+    <div class="splash-inner">
+        <h2>Open Public Rooms</h2>
+        <div class="room-list" id="public-room-list"></div>
+        <p class="hint" id="public-room-list-empty">No open rooms right now &mdash; create one!</p>
+        <div class="menu-buttons">
+            <a href="javascript:void(0)" class="big-btn" id="btn-public-refresh">Refresh</a>
+        </div>
+        <p class="error-text" id="online-public-list-error"></p>
+        <a href="javascript:void(0)" class="text-link" id="btn-public-list-back">&laquo; Back</a>
     </div>
 </div>
 

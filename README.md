@@ -75,11 +75,13 @@ js/ai.js             Iterative-deepening alpha-beta search used for "Play vs Com
 js/online.js         XHR client for the /api online-play routes (polling, no WebSockets)
 js/app.js            UI controller: screens, board rendering, click handling, game flow
 api/_room.js          Shared server-side helpers (Redis REST calls, room/token/replay logic)
-api/create-room.js    POST - creates a room, returns a room code + your player token
+api/create-room.js    POST - creates a room (optionally public), returns a code + player token
 api/join-room.js      POST - joins an existing room as the second player
 api/move.js           POST - validates and applies a move server-side (turn + legality checks)
 api/state.js          GET  - polled by both clients for the room's current move list/status
-package.json         No runtime dependencies; just pins the Node 18+ function runtime
+api/cancel-room.js    POST - lets the creator delete a room that's still waiting for an opponent
+api/list-public-rooms.js  GET - lists open public rooms for the "Public Server Play" lobby
+package.json         No runtime dependencies
 vercel.json          Static hosting config with light caching headers for the assets
 ```
 
@@ -101,9 +103,17 @@ vercel.json          Static hosting config with light caching headers for the as
 
 ### Online play
 
-Create a game to get a 5-character room code, share it with another
-person, and they join with **Play Online → Join Game**. The board updates
-automatically for both sides — no manual refresh.
+Two ways to find an opponent, both under **Play Online**:
+
+- **Create Game / Join Game** — a private 5-character room code you share
+  with someone directly (over text, etc.).
+- **Public Server Play** — no code needed. **Create Room** puts you in an
+  open lobby anyone can find; **Join Room** shows a live list of everyone
+  currently waiting, tap one to join it. The list polls every 3s while
+  you're browsing it.
+
+Either way, the board updates automatically for both sides once a game
+starts — no manual refresh.
 
 This deliberately does not use WebSockets: old Kindle browsers are
 unreliable WebSocket clients, so instead each browser just polls a small
