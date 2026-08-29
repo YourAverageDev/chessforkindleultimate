@@ -29,12 +29,16 @@ var OnlineClient = (function () {
         xhr.send(body ? JSON.stringify(body) : null);
     }
 
-    function createRoom(callback) {
-        request('POST', '/api/create-room', {}, callback);
+    function createRoom(isPublic, callback) {
+        request('POST', '/api/create-room', { public: !!isPublic }, callback);
     }
 
     function joinRoom(code, callback) {
         request('POST', '/api/join-room', { room: code }, callback);
+    }
+
+    function cancelRoom(code, token, callback) {
+        request('POST', '/api/cancel-room', { room: code, token: token }, callback);
     }
 
     function sendMove(code, token, move, callback) {
@@ -45,11 +49,18 @@ var OnlineClient = (function () {
         request('GET', '/api/state?room=' + encodeURIComponent(code), null, callback);
     }
 
-    function startPolling(code, intervalMs, onUpdate) {
+    function listPublicRooms(callback) {
+        request('GET', '/api/list-public-rooms', null, callback);
+    }
+
+    /* fetchFn is any function of the shape fetchFn(callback) - lets this
+     * one polling loop drive either room-state polling or public-lobby-list
+     * polling from the caller. */
+    function startPolling(fetchFn, intervalMs, onUpdate) {
         stopPolling();
         var myToken = ++pollToken;
         var poll = function () {
-            fetchState(code, function (err, data) {
+            fetchFn(function (err, data) {
                 /* A request in flight when stopPolling() (or a fresh
                  * startPolling()) ran must not resurrect this loop or
                  * hand stale data to a callback that's since moved on -
@@ -73,8 +84,10 @@ var OnlineClient = (function () {
     return {
         createRoom: createRoom,
         joinRoom: joinRoom,
+        cancelRoom: cancelRoom,
         sendMove: sendMove,
         fetchState: fetchState,
+        listPublicRooms: listPublicRooms,
         startPolling: startPolling,
         stopPolling: stopPolling
     };

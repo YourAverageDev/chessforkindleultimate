@@ -6,6 +6,9 @@ module.exports = async function handler(req, res) {
     }
 
     try {
+        var body = await room.readJsonBody(req);
+        var isPublic = !!body.public;
+
         var code = await room.createRoomCode();
         var token = room.randomToken();
         var now = Date.now();
@@ -16,9 +19,12 @@ module.exports = async function handler(req, res) {
             blackToken: null,
             status: 'waiting',
             result: null,
+            public: isPublic,
             createdAt: now,
             lastMoveAt: now
         });
+
+        if (isPublic) { await room.addToPublicList(code); }
 
         return room.sendJson(res, 200, { room: code, token: token, color: 'w' });
     } catch (err) {

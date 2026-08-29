@@ -19,6 +19,7 @@ module.exports = async function handler(req, res) {
         r.status = 'active';
         r.lastMoveAt = Date.now();
         await roomLib.saveRoom(code, r);
+        await roomLib.removeFromPublicList(code); /* no longer joinable - drop it from the lobby */
 
         return roomLib.sendJson(res, 200, { room: code, token: token, color: 'b' });
     } catch (err) {
