@@ -1,0 +1,218 @@
+/* style.css
+ * Deliberately old-browser-friendly: no flexbox, no grid, no gradients,
+ * no box-shadow reliance, no webfonts. Plain block/table layout and flat
+ * colors so it renders correctly (and fast) on old Kindle e-ink WebKit as
+ * well as modern browsers and Kindle Fire tablets.
+ */
+
+html, body {
+    margin: 0;
+    padding: 0;
+    background: #ffffff;
+    color: #111111;
+    font-family: Helvetica, Arial, "Liberation Sans", sans-serif;
+}
+
+* {
+    box-sizing: border-box;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.screen {
+    width: 100%;
+    min-height: 100%;
+    padding: 16px 8px 24px 8px;
+    text-align: center;
+}
+
+.splash-inner {
+    max-width: 520px;
+    margin: 0 auto;
+}
+
+.title {
+    font-size: 28px;
+    margin: 12px 0 4px 0;
+    font-weight: bold;
+}
+
+.title-sub {
+    display: block;
+    font-size: 15px;
+    font-weight: normal;
+    color: #555555;
+    margin-top: 2px;
+}
+
+.board-icon {
+    font-size: 36px;
+    letter-spacing: 6px;
+    margin: 14px 0 20px 0;
+    color: #333333;
+}
+
+.menu-buttons {
+    margin: 0 auto;
+    max-width: 320px;
+}
+
+.big-btn {
+    display: block;
+    background: #3a6b35;
+    color: #ffffff;
+    text-decoration: none;
+    font-size: 18px;
+    font-weight: bold;
+    padding: 16px 10px;
+    margin: 10px 0;
+    border: 2px solid #274a24;
+}
+
+.big-btn:active {
+    background: #274a24;
+}
+
+.hint {
+    color: #666666;
+    font-size: 13px;
+    margin-top: 22px;
+}
+
+.text-link {
+    display: inline-block;
+    margin-top: 14px;
+    color: #3a6b35;
+    text-decoration: underline;
+    font-size: 15px;
+}
+
+/* ---- game screen ---- */
+
+#status-bar {
+    padding: 8px 4px;
+    font-size: 16px;
+    font-weight: bold;
+    min-height: 22px;
+}
+
+#board-wrap {
+    text-align: center;
+}
+
+#board-table {
+    margin: 0 auto;
+    border-collapse: collapse;
+    border: 3px solid #222222;
+}
+
+#board-table td {
+    width: 40px;
+    height: 40px;
+    text-align: center;
+    vertical-align: middle;
+    padding: 0;
+}
+
+.sq-light { background: #eeeed2; }
+.sq-dark { background: #6f9152; }
+
+.sq-selected { background: #f6f682 !important; }
+.sq-legal { background: #b9d97a !important; }
+.sq-legal-capture { background: #d97a7a !important; }
+.sq-lastmove { background: #cfd98a !important; }
+.sq-check { background: #e05a5a !important; }
+
+.piece-link {
+    display: block;
+    width: 100%;
+    height: 100%;
+    text-decoration: none;
+    color: inherit;
+    font-size: 30px;
+    line-height: 40px;
+}
+
+.piece-white {
+    color: #ffffff;
+    text-shadow: -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000;
+}
+
+.piece-black {
+    color: #000000;
+}
+
+#controls {
+    margin-top: 14px;
+}
+
+.ctrl-btn {
+    display: inline-block;
+    background: #444444;
+    color: #ffffff;
+    text-decoration: none;
+    font-size: 14px;
+    font-weight: bold;
+    padding: 10px 12px;
+    margin: 4px;
+    border: 1px solid #222222;
+}
+
+.ctrl-btn:active {
+    background: #222222;
+}
+
+.overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: #ffffff;
+    text-align: center;
+    padding-top: 80px;
+}
+
+.overlay-box {
+    max-width: 320px;
+    margin: 0 auto;
+    border: 3px solid #222222;
+    padding: 20px;
+    background: #f5f5e8;
+}
+
+.overlay-box p {
+    font-size: 18px;
+    font-weight: bold;
+    margin: 0 0 16px 0;
+}
+
+.promo-choices {
+    margin-bottom: 6px;
+}
+
+.promo-btn {
+    display: inline-block;
+    width: 52px;
+    height: 52px;
+    line-height: 52px;
+    font-size: 32px;
+    background: #ffffff;
+    border: 2px solid #222222;
+    margin: 4px;
+    text-decoration: none;
+    color: #000000;
+}
+
+.promo-btn:active {
+    background: #dddddd;
+}
+
+@media (min-width: 480px) {
+    #board-table td { width: 52px; height: 52px; }
+    .piece-link { font-size: 40px; line-height: 52px; }
+}
+
+@media (min-width: 700px) {
+    #board-table td { width: 64px; height: 64px; }
+    .piece-link { font-size: 50px; line-height: 64px; }
+}

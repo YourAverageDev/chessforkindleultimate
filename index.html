@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Chess for Kindle Ultimate</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%233a6b35'/%3E%3Ctext x='50' y='74' font-size='68' text-anchor='middle' fill='white'%3E%E2%99%9E%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<!-- SPLASH / MAIN MENU -->
+<div id="splash-screen" class="screen">
+    <div class="splash-inner">
+        <h1 class="title">Chess<span class="title-sub">for Kindle Ultimate</span></h1>
+        <div class="board-icon" aria-hidden="true">&#9812;&#9819;&#9821;&#9814;</div>
+        <div class="menu-buttons">
+            <a href="javascript:void(0)" class="big-btn" id="btn-2p">2 Player Mode</a>
+            <a href="javascript:void(0)" class="big-btn" id="btn-vs-ai">Play vs Computer</a>
+        </div>
+        <p class="hint">Tap a piece, then tap where it should go.</p>
+    </div>
+</div>
+
+<!-- DIFFICULTY SCREEN -->
+<div id="difficulty-screen" class="screen" style="display:none;">
+    <div class="splash-inner">
+        <h2>Choose Difficulty</h2>
+        <div class="menu-buttons">
+            <a href="javascript:void(0)" class="big-btn" id="btn-diff-easy">Easy</a>
+            <a href="javascript:void(0)" class="big-btn" id="btn-diff-medium">Medium</a>
+            <a href="javascript:void(0)" class="big-btn" id="btn-diff-hard">Hard</a>
+        </div>
+        <a href="javascript:void(0)" class="text-link" id="btn-diff-back">&laquo; Back</a>
+    </div>
+</div>
+
+<!-- GAME SCREEN -->
+<div id="game-screen" class="screen" style="display:none;">
+    <div id="status-bar">
+        <span id="status-text">White to move</span>
+    </div>
+
+    <div id="board-wrap">
+        <table id="board-table" cellspacing="0" cellpadding="0"></table>
+    </div>
+
+    <div id="controls">
+        <a href="javascript:void(0)" class="ctrl-btn" id="btn-new">New Game</a>
+        <a href="javascript:void(0)" class="ctrl-btn" id="btn-undo">Undo</a>
+        <a href="javascript:void(0)" class="ctrl-btn" id="btn-flip">Flip</a>
+        <a href="javascript:void(0)" class="ctrl-btn" id="btn-menu">Menu</a>
+    </div>
+</div>
+
+<!-- PROMOTION PICKER OVERLAY -->
+<div id="promo-overlay" class="overlay" style="display:none;">
+    <div class="overlay-box">
+        <p>Promote pawn to:</p>
+        <div class="promo-choices">
+            <a href="javascript:void(0)" class="promo-btn" id="promo-q">&#9813;</a>
+            <a href="javascript:void(0)" class="promo-btn" id="promo-r">&#9814;</a>
+            <a href="javascript:void(0)" class="promo-btn" id="promo-b">&#9815;</a>
+            <a href="javascript:void(0)" class="promo-btn" id="promo-n">&#9816;</a>
+        </div>
+    </div>
+</div>
+
+<!-- GAME OVER OVERLAY -->
+<div id="gameover-overlay" class="overlay" style="display:none;">
+    <div class="overlay-box">
+        <p id="gameover-text">Checkmate</p>
+        <a href="javascript:void(0)" class="ctrl-btn" id="btn-gameover-new">New Game</a>
+        <a href="javascript:void(0)" class="ctrl-btn" id="btn-gameover-menu">Menu</a>
+    </div>
+</div>
+
+<script src="js/chessEngine.js"></script>
+<script src="js/ai.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
