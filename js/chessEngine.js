@@ -39,6 +39,95 @@ var ChessEngine = (function () {
         };
     }
 
+    /* Parses a standard FEN string into our state shape. Used for Lichess
+     * integration: Lichess reports game state as a FEN, and FEN happens to
+     * carry everything our state object needs (castling rights, en passant
+     * target) - no move-list replay required to know the current position. */
+    function stateFromFen(fen) {
+        var parts = (fen || '').replace(/^\s+|\s+$/g, '').split(/\s+/);
+        var placement = parts[0] || '';
+        var activeColor = parts[1] || 'w';
+        var castlingStr = parts[2] || '-';
+        var epStr = parts[3] || '-';
+        var halfmove = parseInt(parts[4], 10);
+        var fullmove = parseInt(parts[5], 10);
+        if (isNaN(halfmove)) { halfmove = 0; }
+        if (isNaN(fullmove)) { fullmove = 1; }
+
+        var board = new Array(64);
+        var i;
+        for (i = 0; i < 64; i++) { board[i] = null; }
+
+        var validTypes = { p: true, n: true, b: true, r: true, q: true, k: true };
+        var rows = placement.split('/');
+        for (var r = 0; r < 8 && r < rows.length; r++) {
+            var rank = 7 - r;
+            var file = 0;
+            var row = rows[r];
+            for (var c = 0; c < row.length; c++) {
+                var ch = row.charAt(c);
+                if (ch >= '1' && ch <= '8') {
+                    file += parseInt(ch, 10);
+                } else {
+                    var lower = ch.toLowerCase();
+                    if (validTypes[lower] && file >= 0 && file < 8) {
+                        board[rank * 8 + file] = { type: lower, color: (ch === ch.toUpperCase()) ? 'w' : 'b' };
+                    }
+                    file++;
+                }
+            }
+        }
+
+        var castling = {
+            wK: castlingStr.indexOf('K') >= 0,
+            wQ: castlingStr.indexOf('Q') >= 0,
+            bK: castlingStr.indexOf('k') >= 0,
+            bQ: castlingStr.indexOf('q') >= 0
+        };
+
+        var ep = algebraicToSquare(epStr);
+
+        return {
+            board: board,
+            turn: (activeColor === 'b') ? 'b' : 'w',
+            castling: castling,
+            ep: ep,
+            halfmove: halfmove,
+            fullmove: fullmove
+        };
+    }
+
+    function squareToAlgebraic(idx) {
+        if (idx === null || idx === undefined || idx < 0 || idx > 63) { return null; }
+        var file = idx % 8;
+        var rank = (idx - file) / 8;
+        return String.fromCharCode(97 + file) + (rank + 1);
+    }
+
+    function algebraicToSquare(str) {
+        if (!str || str.length < 2 || str === '-') { return null; }
+        var file = str.charCodeAt(0) - 97;
+        var rank = parseInt(str.charAt(1), 10) - 1;
+        if (file < 0 || file > 7 || rank < 0 || rank > 7 || isNaN(rank)) { return null; }
+        return rank * 8 + file;
+    }
+
+    /* UCI ("e2e4", "e7e8q") is what Lichess's Board API speaks for moves in
+     * and out - these convert to/from our {from,to,promotion} move shape. */
+    function moveToUci(move) {
+        var s = squareToAlgebraic(move.from) + squareToAlgebraic(move.to);
+        if (move.promotion) { s += move.promotion; }
+        return s;
+    }
+
+    function uciToMove(uci) {
+        if (!uci || uci.length < 4) { return null; }
+        var from = algebraicToSquare(uci.substring(0, 2));
+        var to = algebraicToSquare(uci.substring(2, 4));
+        if (from === null || to === null) { return null; }
+        return { from: from, to: to, promotion: uci.length > 4 ? uci.charAt(4) : null };
+    }
+
     function makeMoveObj(from, to, captured, promotion, flag) {
         return { from: from, to: to, captured: captured || null, promotion: promotion || null, flag: flag || 'normal' };
     }
@@ -372,7 +461,12 @@ var ChessEngine = (function () {
         getStatus: getStatus,
         hasInsufficientMaterial: hasInsufficientMaterial,
         positionKey: positionKey,
-        otherColor: otherColor
+        otherColor: otherColor,
+        stateFromFen: stateFromFen,
+        squareToAlgebraic: squareToAlgebraic,
+        algebraicToSquare: algebraicToSquare,
+        moveToUci: moveToUci,
+        uciToMove: uciToMove
     };
 
     /* Also usable from Node (api/*.js serverless functions use this same

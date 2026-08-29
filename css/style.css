@@ -99,6 +99,47 @@ html, body {
     font-size: 15px;
 }
 
+.tc-select {
+    display: block;
+    width: 100%;
+    max-width: 320px;
+    margin: 6px auto 0 auto;
+    padding: 10px;
+    font-size: 16px;
+    border: 2px solid #222222;
+    background: #ffffff;
+    color: #111111;
+}
+
+.tri-buttons {
+    margin-top: 6px;
+}
+
+.small-btn {
+    display: inline-block;
+    width: 30%;
+    margin: 10px 0.4%;
+    padding: 12px 2px;
+    font-size: 14px;
+}
+
+.choice-btn.selected {
+    background: #1f3d1c;
+    border-color: #0f1f0d;
+}
+
+#reconnect-banner {
+    background: #e0a03a;
+    color: #3a2a00;
+    font-weight: bold;
+    padding: 6px 4px;
+    margin-bottom: 6px;
+}
+
+#lichess-clock {
+    margin-bottom: 6px;
+}
+
 .error-text {
     color: #b02a2a;
     font-size: 14px;
@@ -226,6 +267,7 @@ html, body {
 }
 
 #board-table td {
+    position: relative;
     width: 44px;
     height: 44px;
     text-align: center;
@@ -235,6 +277,30 @@ html, body {
 
 .sq-light { background: #eeeed2; }
 .sq-dark { background: #6f9152; }
+
+.coord-label {
+    position: absolute;
+    left: 2px;
+    top: 0;
+    font-size: 9px;
+    font-weight: bold;
+    line-height: 1;
+    pointer-events: none;
+}
+
+.coord-file {
+    left: auto;
+    top: auto;
+    right: 2px;
+    bottom: 1px;
+}
+
+.coord-on-light { color: #6f9152; }
+.coord-on-dark { color: #eeeed2; }
+
+@media (min-width: 480px) {
+    .coord-label { font-size: 11px; }
+}
 
 .sq-selected { background: #f6f682 !important; }
 .sq-legal { background: #b9d97a !important; }

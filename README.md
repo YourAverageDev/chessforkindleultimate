@@ -73,6 +73,7 @@ js/chessEngine.js    Pure rules engine: legal moves, check/mate/stalemate, castl
                      en passant, promotion, draw detection (also used from Node - see below)
 js/ai.js             Iterative-deepening alpha-beta search used for "Play vs Computer"
 js/online.js         XHR client for the /api online-play routes (polling, no WebSockets)
+js/lichess.js        Lichess OAuth (PKCE, with a bundled pure-JS SHA-256) + Board API client
 js/app.js            UI controller: screens, board rendering, click handling, game flow
 api/_room.js          Shared server-side helpers (Redis REST calls, room/token/replay logic)
 api/create-room.js    POST - creates a room (optionally public), returns a code + player token
@@ -81,15 +82,29 @@ api/move.js           POST - validates and applies a move server-side (turn + le
 api/state.js          GET  - polled by both clients for the room's current move list/status
 api/cancel-room.js    POST - lets the creator delete a room that's still waiting for an opponent
 api/list-public-rooms.js  GET - lists open public rooms for the "Public Server Play" lobby
+api/lichess/_lichess.js          Shared helpers: OAuth token exchange, session storage, Lichess API proxy
+api/lichess/oauth-exchange.js    POST - completes login, returns our session token
+api/lichess/me.js                GET  - current Lichess username + ratings
+api/lichess/logout.js            POST - clears the session (and best-effort revokes the Lichess token)
+api/lichess/challenge-create.js  POST - challenges a Lichess username
+api/lichess/challenge-respond.js POST - accept/decline an incoming challenge
+api/lichess/challenge-status.js  GET  - poll target while waiting for a challenge to be accepted
+api/lichess/game-state.js        GET  - current FEN/clock/status for one Lichess game
+api/lichess/move.js              POST - sends a move (UCI) to a Lichess game
+api/lichess/resign.js            POST - resigns a Lichess game
+api/lichess/draw.js              POST - offers/accepts a draw
+api/lichess/poll-events.js       GET  - bounded sample of incoming challenges (see caveat below)
 package.json         No runtime dependencies
 vercel.json          Static hosting config with light caching headers for the assets
 ```
 
 ## Features
 
-- **Splash screen** with three modes: **2 Player** (pass-and-play),
-  **Play vs Computer** (six Elo-labeled levels, 400 to 2400), and
-  **Play Online**.
+- **Splash screen** with two top-level paths: **Play Lichess** (real
+  opponents via your Lichess account) and **Local Rooms** (everything that
+  doesn't need an account: **2 Player** pass-and-play, **Play vs Computer**
+  at six Elo-labeled levels from 400 to 2400, and this app's own **Play
+  Online** room system).
 - Full chess rules: castling (both sides), en passant, pawn promotion
   (choose queen/rook/bishop/knight), check/checkmate/stalemate detection,
   draw by insufficient material or the 50-move rule, draw by threefold
@@ -139,6 +154,95 @@ dependency. Without a KV store connected, the 2 Player and vs Computer
 modes work fine, but Online Play will show a "Something went wrong" error
 when creating or joining a room.
 
+## Lichess play
+
+**Play Lichess** lets you log in with a real Lichess account and play real
+opponents, rated or casual, with your own time control and color choice.
+This is "Phase 1" of a larger wishlist — deliberately scoped to the
+highest-priority half (login, challenge/play, live moves, clocks,
+reconnection, reliable move handling, resign/draw, the Kindle-friendly
+board) and not the rest (game history, replay, PGN import/export, puzzles,
+opening explorer, spectating) — before going further.
+
+### Please read this before relying on it
+
+This was built **without live access to Lichess's API docs or a real
+account** — this sandbox's network policy blocks `lichess.org` entirely, so
+none of it could be verified against the real service while writing it.
+What's in `api/lichess/_lichess.js`, `js/lichess.js`, and the other
+`api/lichess/*.js` files is a best-confidence reconstruction from general
+knowledge of Lichess's long-stable public API, tested as thoroughly as
+possible against a local mock that reproduces the documented shapes and
+endpoints — but "the mock behaved correctly" isn't the same as "the real
+API behaves this way." **The first real test of the OAuth login and the
+Board API calls needs to happen against your actual Lichess account.** If
+something doesn't work, the likely fix is small and localized (a field
+name, a body encoding, an endpoint path) — start with whichever
+`api/lichess/*.js` file corresponds to the failing action, and check
+Vercel's function logs for the actual error Lichess returned.
+
+Specific things that couldn't be confirmed and are worth checking first:
+- The **OAuth token exchange** body encoding (form-urlencoded, per the
+  OAuth2 RFC — `api/lichess/_lichess.js`'s `exchangeCodeForToken`) and
+  whether Lichess's PKCE flow truly needs no app pre-registration (used
+  here on that assumption, with `client_id: "chess-for-kindle-ultimate"`
+  hardcoded in both `js/lichess.js` and `api/lichess/_lichess.js` — if
+  Lichess does reject an unregistered client_id, register one at
+  lichess.org and update both files to match).
+- The exact field names in `/api/account/playing` and `/api/challenge/*`
+  responses (`api/lichess/game-state.js`, `challenge-status.js`,
+  `challenge-create.js`).
+- Whether `/api/game/export/{id}` needs `?pgnInJson=true` or a different
+  parameter/header to return JSON instead of raw PGN.
+
+### Why some of this looks different from a "normal" Lichess client
+
+- **No WebSockets, no long-lived streams anywhere in this app's own
+  infrastructure.** Lichess's real-time push (moves, incoming challenges)
+  is delivered over long-lived NDJSON streams
+  (`/api/stream/event`, `/api/board/game/stream/{id}`) - old Kindle
+  browsers can't reliably hold a connection like that open, and a Vercel
+  serverless function can't run forever either. So: live game moves are
+  read from `/api/account/playing`, a plain polling-friendly GET, every
+  ~2s. Incoming challenges have no such plain GET as far as could be
+  confirmed, so `api/lichess/poll-events.js` instead opens
+  `/api/stream/event` itself, reads whatever arrives in a bounded ~7-second
+  window, and returns that - the client calls this endpoint every 15-20s
+  while sitting on a relevant screen. **That interval, not instant
+  delivery, is the deliberate tradeoff for staying entirely
+  polling-based**, confirmed as acceptable up front.
+- **Only one "time left" reading, not two always-visible clocks.**
+  `/api/account/playing` exposes a single `secondsLeft` for whichever side
+  is on the clock, not a clean both-sides split - so the Lichess game
+  screen shows one live reading rather than reusing the two-box clock UI
+  from Public Server Play. If real API access later turns up richer
+  per-side clock data, upgrading the display is a small client-side change.
+- **Draw offers can only be sent, not detected.** Whether the opponent has
+  offered a draw appears to live only in the streamed game state, which
+  this app deliberately doesn't hold open - so there's a single "Offer/
+  Accept Draw" button that calls Lichess's `draw/yes` endpoint either way
+  (which is what that endpoint is for regardless of which side calls it),
+  rather than a popup that says "your opponent offered a draw."
+- **Reconnection** shows a "Reconnecting…" banner after 2 consecutive
+  failed polls without tearing down the board or game state, and keeps
+  retrying at the same interval - this is a thin UX layer over polling
+  that was already resilient by construction (a failed poll simply
+  reschedules the next one, same as it always has). Separately, the active
+  game (its id and your color) is persisted to `localStorage`, so a full
+  page reload or a killed tab - a real scenario on old Kindle hardware
+  under memory pressure, not just a hypothetical - resumes straight back
+  into the game instead of losing it.
+- **Undo is hidden for Lichess games** (same treatment as this app's own
+  online rooms) since a real Lichess game can't be locally rewound.
+
+### Setup
+
+Same Redis-backed store as the rest of online play (see below) - no
+additional service to provision. The only Lichess-specific configuration
+is the `CLIENT_ID` constant, which must match exactly between
+`js/lichess.js` and `api/lichess/_lichess.js` (`chess-for-kindle-ultimate`
+by default) if you ever need to change it.
+
 ## Running locally
 
 The **2 Player** and **vs Computer** modes are static files, no server
@@ -183,7 +287,8 @@ Remember the Storage step above if you want Online Play to work.
   special-cased (still correctly plays on rather than misdetecting a draw).
 - In "Play vs Computer" mode you always play White; there's no color
   picker (kept out to match the minimal, few-taps UI this was modeled on).
-- Online play has no resign/draw-offer button, no reconnect-with-a-new-
-  device support (the player token lives only in that browser tab's
-  memory), and abandoned rooms simply expire after 6 hours rather than
-  being cleaned up immediately.
+- This app's own room system (Create/Join Game, Public Server Play) has no
+  resign/draw-offer button, no reconnect-with-a-new-device support (the
+  player token lives only in that browser tab's memory), and abandoned
+  rooms simply expire after 6 hours rather than being cleaned up
+  immediately. Lichess play has resign/draw and reconnection - see below.
