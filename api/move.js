@@ -20,6 +20,9 @@ module.exports = async function handler(req, res) {
 
         var r = await roomLib.getRoom(code);
         if (!r) { return roomLib.sendJson(res, 404, { error: 'room_not_found' }); }
+
+        var timeoutCheck = roomLib.checkTimeout(r);
+        if (timeoutCheck.justFinished) { await roomLib.saveRoom(code, r); }
         if (r.status !== 'active') { return roomLib.sendJson(res, 409, { error: 'game_not_active', status: r.status, result: r.result }); }
 
         var myColor = null;
@@ -47,10 +50,24 @@ module.exports = async function handler(req, res) {
             r.status = 'finished';
             r.result = outcome.result;
         }
+
+        if (r.timerEnabled && r.turnStartedAt) {
+            var elapsedMs = Date.now() - r.turnStartedAt;
+            if (myColor === 'w') { r.whiteTimeLeftMs = Math.max(0, r.whiteTimeLeftMs - elapsedMs); }
+            else { r.blackTimeLeftMs = Math.max(0, r.blackTimeLeftMs - elapsedMs); }
+            r.turnStartedAt = Date.now(); /* the other side's clock starts now */
+        }
+
         r.lastMoveAt = Date.now();
         await roomLib.saveRoom(code, r);
 
-        return roomLib.sendJson(res, 200, { moves: r.moves, status: r.status, result: r.result });
+        var response = { moves: r.moves, status: r.status, result: r.result };
+        var timerFields = roomLib.timerFields(r);
+        for (var key in timerFields) {
+            if (timerFields.hasOwnProperty(key)) { response[key] = timerFields[key]; }
+        }
+
+        return roomLib.sendJson(res, 200, response);
     } catch (err) {
         return roomLib.sendJson(res, 500, { error: 'server_error', message: String(err && err.message || err) });
     }

@@ -11,6 +11,7 @@ var crypto = require('crypto');
 
 var ROOM_TTL_SECONDS = 6 * 60 * 60; /* abandoned/finished rooms expire after 6h */
 var CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; /* no 0/O/1/I - avoids ambiguity when read aloud/typed */
+var PUBLIC_TIME_CONTROL_MS = 10 * 60 * 1000; /* 10 minutes per side, Public Server Play only */
 
 function getCreds() {
     var url = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
@@ -122,6 +123,39 @@ function statusAndResult(state) {
     return { finished: false, result: null };
 }
 
+/* Timeout is checked lazily (on every /api/state poll and before every
+ * /api/move), rather than on a server-side timer, since serverless
+ * functions don't have a persistent background process to run one in
+ * anyway - the room object always has enough information (whose turn it
+ * is, and when that turn started) to determine "has this side run out of
+ * time?" from wall-clock time alone. Mutates and returns `room`; the
+ * caller is responsible for persisting it if `finished` comes back true. */
+function checkTimeout(room) {
+    if (!room.timerEnabled || room.status !== 'active' || !room.turnStartedAt) {
+        return { room: room, justFinished: false };
+    }
+    var state = replay(room.moves);
+    var elapsed = Date.now() - room.turnStartedAt;
+    var turn = state.turn;
+    var remaining = (turn === 'w' ? room.whiteTimeLeftMs : room.blackTimeLeftMs) - elapsed;
+
+    if (remaining > 0) { return { room: room, justFinished: false }; }
+
+    if (turn === 'w') { room.whiteTimeLeftMs = 0; } else { room.blackTimeLeftMs = 0; }
+    room.status = 'finished';
+    room.result = (turn === 'w' ? 'black' : 'white') + '_wins_timeout';
+    return { room: room, justFinished: true };
+}
+
+function timerFields(room) {
+    return {
+        timerEnabled: !!room.timerEnabled,
+        whiteTimeLeftMs: room.timerEnabled ? room.whiteTimeLeftMs : null,
+        blackTimeLeftMs: room.timerEnabled ? room.blackTimeLeftMs : null,
+        turnStartedAt: room.timerEnabled ? room.turnStartedAt : null
+    };
+}
+
 async function readJsonBody(req) {
     if (req.body && typeof req.body === 'object') { return req.body; }
     if (typeof req.body === 'string' && req.body.length) {
@@ -153,7 +187,10 @@ module.exports = {
     randomToken: randomToken,
     replay: replay,
     statusAndResult: statusAndResult,
+    checkTimeout: checkTimeout,
+    timerFields: timerFields,
     readJsonBody: readJsonBody,
     sendJson: sendJson,
-    ROOM_TTL_SECONDS: ROOM_TTL_SECONDS
+    ROOM_TTL_SECONDS: ROOM_TTL_SECONDS,
+    PUBLIC_TIME_CONTROL_MS: PUBLIC_TIME_CONTROL_MS
 };

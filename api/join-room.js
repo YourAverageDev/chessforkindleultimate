@@ -18,6 +18,7 @@ module.exports = async function handler(req, res) {
         r.blackToken = token;
         r.status = 'active';
         r.lastMoveAt = Date.now();
+        if (r.timerEnabled) { r.turnStartedAt = Date.now(); } /* white's clock starts now */
         await roomLib.saveRoom(code, r);
         await roomLib.removeFromPublicList(code); /* no longer joinable - drop it from the lobby */
 
