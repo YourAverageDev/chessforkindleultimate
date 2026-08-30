@@ -111,6 +111,16 @@ var replayReturnScreen = 'splash';
  * for why), consistent with this app's polling-only architecture. */
 var watchGameId = null;
 
+/* Kindle pairing state (this device's own pairing code, while displayed
+ * and waiting to be linked from another device). */
+var lichessPairingCode = null;
+
+/* Find Match state. matchSelectedRated mirrors lichessSelectedRated's role
+ * for the Challenge screen, but kept separate since the two screens can be
+ * open independently and shouldn't share selection state. */
+var lichessFindMatchTicketId = null;
+var matchSelectedRated = false;
+
 function setText(el, str) {
     if (el.textContent !== undefined) { el.textContent = str; }
     else { el.innerText = str; }
@@ -123,6 +133,7 @@ var ALL_SCREENS = [
     'puzzle-menu',
     'lichess-my-games', 'lichess-import-pgn', 'lichess-game-pgn',
     'tv-list', 'lichess-profile', 'lichess-analysis',
+    'lichess-pairing', 'lichess-link-device', 'lichess-find-match', 'lichess-matching',
     'game'
 ];
 
@@ -1760,6 +1771,132 @@ function renderAnalysis(err, data, fen) {
     });
 }
 
+/* ---- Kindle pairing ---- */
+
+/* Reached from the "Pair via Code" button on the login screen - for a
+ * device (like an old Kindle) that can't do the OAuth redirect. This
+ * screen never contacts lichess.org itself; it only ever talks to our own
+ * origin (pairing-create/pairing-status), same as everything else this
+ * app does on a Kindle. */
+function openLichessPairingScreen() {
+    setMessage('pairing-error', '');
+    setText(document.getElementById('pairing-code-display'), '------');
+    showScreen('lichess-pairing');
+    LichessClient.pairingCreate(function (err, data) {
+        if (err || !data) { setMessage('pairing-error', 'Could not start pairing. Please try again.'); return; }
+        lichessPairingCode = data.code;
+        setText(document.getElementById('pairing-code-display'), data.code);
+        OnlineClient.startPolling(function (cb) {
+            LichessClient.pairingStatus(lichessPairingCode, cb);
+        }, 3000, onPairingPollUpdate);
+    });
+}
+
+function onPairingPollUpdate(err, data) {
+    if (err || !data || !data.found) { return; } /* a transient poll hiccup here shouldn't show an error - just wait for the next tick */
+    if (data.linked && data.sessionToken) {
+        OnlineClient.stopPolling();
+        LichessClient.adoptSession(data.sessionToken, data.username);
+        lichessSession = LichessClient.getStoredSession();
+        showLichessMenu();
+    }
+}
+
+function cancelPairing() {
+    OnlineClient.stopPolling();
+    lichessPairingCode = null;
+    showScreen('lichess-login');
+}
+
+/* Reached from "Link Another Device" on the Lichess menu - run on the
+ * device that's ALREADY logged in (phone/PC), to hand its session to a
+ * Kindle showing a pairing code. */
+function openLinkDeviceScreen() {
+    setMessage('link-device-error', '');
+    document.getElementById('link-device-code-input').value = '';
+    showScreen('lichess-link-device');
+}
+
+function submitLinkDevice() {
+    setMessage('link-device-error', '');
+    var code = document.getElementById('link-device-code-input').value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (!code) { setMessage('link-device-error', 'Enter the code shown on the other device.'); return; }
+    LichessClient.pairingLink(lichessSessionToken(), code, function (err, data) {
+        if (err || !data) {
+            var msg = (err && err.status === 400) ? 'That code is invalid or has expired.' : formatLichessError(err);
+            setMessage('link-device-error', msg);
+            return;
+        }
+        showLichessMenu();
+    });
+}
+
+/* ---- Find Match ---- */
+
+function openLichessFindMatchScreen() {
+    setMessage('find-match-error', '');
+    matchSelectedRated = false;
+    updateMatchChoiceButtons();
+    showScreen('lichess-find-match');
+}
+
+function updateMatchChoiceButtons() {
+    var casualBtn = document.getElementById('btn-match-rated-casual');
+    var ratedBtn = document.getElementById('btn-match-rated-rated');
+    casualBtn.className = 'big-btn small-btn choice-btn' + (!matchSelectedRated ? ' selected' : '');
+    ratedBtn.className = 'big-btn small-btn choice-btn' + (matchSelectedRated ? ' selected' : '');
+}
+
+function startFindMatch() {
+    setMessage('find-match-error', '');
+    var tc = document.getElementById('lichess-findmatch-timecontrol-select').value.split(',');
+    var clockLimitSec = parseInt(tc[0], 10);
+    var clockIncrementSec = parseInt(tc[1], 10);
+
+    LichessClient.findMatchStart(lichessSessionToken(), {
+        timeControlSec: clockLimitSec,
+        incrementSec: clockIncrementSec,
+        rated: matchSelectedRated
+    }, function (err, data) {
+        if (err || !data) { setMessage('find-match-error', formatLichessError(err)); return; }
+        lichessFindMatchTicketId = data.ticketId;
+        setMessage('matching-error', '');
+        showScreen('lichess-matching');
+        if (data.matched && data.gameId) { onFoundMatch(data.gameId); return; }
+        OnlineClient.startPolling(function (cb) {
+            LichessClient.findMatchPoll(lichessSessionToken(), lichessFindMatchTicketId, cb);
+        }, 2500, onFindMatchPollUpdate);
+    });
+}
+
+function onFindMatchPollUpdate(err, data) {
+    if (err || !data) { setMessage('matching-error', formatLichessError(err)); return; }
+    setMessage('matching-error', '');
+    if (data.matched && data.gameId) {
+        OnlineClient.stopPolling();
+        onFoundMatch(data.gameId);
+    }
+}
+
+function onFoundMatch(gameId) {
+    LichessClient.fetchGameState(lichessSessionToken(), gameId, function (err, data) {
+        if (!err && data && data.active) { beginLichessGame(gameId, data.color); }
+        else {
+            setMessage('matching-error', 'Match found but the game could not be loaded. Please try again.');
+            showScreen('lichess-menu');
+        }
+    });
+}
+
+function cancelFindMatch() {
+    OnlineClient.stopPolling();
+    if (lichessFindMatchTicketId) {
+        LichessClient.findMatchCancel(lichessSessionToken(), lichessFindMatchTicketId, function () { /* best-effort - screen is already leaving either way */ });
+    }
+    lichessFindMatchTicketId = null;
+    showScreen('lichess-menu');
+}
+
 function undoMove() {
     if (mode === 'online' || mode === 'lichess' || mode === 'puzzle' || mode === 'replay' || mode === 'watch') { return; }
     if (historyStack.length === 0) { return; }
@@ -1853,6 +1990,17 @@ function init() {
 
     document.getElementById('btn-lichess-login').onclick = function () { loginWithLichess(); };
     document.getElementById('btn-lichess-login-back').onclick = function () { showScreen('splash'); };
+    document.getElementById('btn-lichess-pair').onclick = function () { openLichessPairingScreen(); };
+    document.getElementById('btn-pairing-cancel').onclick = function () { cancelPairing(); };
+    document.getElementById('btn-lichess-link-device').onclick = function () { openLinkDeviceScreen(); };
+    document.getElementById('btn-link-device-back').onclick = function () { showScreen('lichess-menu'); };
+    document.getElementById('btn-link-device-submit').onclick = function () { submitLinkDevice(); };
+    document.getElementById('btn-lichess-find-match').onclick = function () { openLichessFindMatchScreen(); };
+    document.getElementById('btn-find-match-back').onclick = function () { showScreen('lichess-menu'); };
+    document.getElementById('btn-find-match-submit').onclick = function () { startFindMatch(); };
+    document.getElementById('btn-matching-cancel').onclick = function () { cancelFindMatch(); };
+    document.getElementById('btn-match-rated-casual').onclick = function () { matchSelectedRated = false; updateMatchChoiceButtons(); };
+    document.getElementById('btn-match-rated-rated').onclick = function () { matchSelectedRated = true; updateMatchChoiceButtons(); };
     document.getElementById('btn-lichess-menu-back').onclick = function () { showScreen('splash'); };
     document.getElementById('btn-lichess-logout').onclick = function () { logoutOfLichess(); };
     document.getElementById('btn-lichess-challenge').onclick = function () { openLichessChallengeScreen(); };

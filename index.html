@@ -52,9 +52,37 @@
             players, accept challenges, and play rated or casual games.</p>
         <div class="menu-buttons">
             <a href="javascript:void(0)" class="big-btn" id="btn-lichess-login">Log In with Lichess</a>
+            <a href="javascript:void(0)" class="big-btn" id="btn-lichess-pair">Pair via Code (Kindle)</a>
         </div>
+        <p class="hint">On a Kindle or other old browser? Use "Pair via Code" instead — it never opens a Lichess page on this device.</p>
         <p class="error-text" id="lichess-login-error"></p>
         <a href="javascript:void(0)" class="text-link" id="btn-lichess-login-back">&laquo; Back</a>
+    </div>
+</div>
+
+<!-- LICHESS: KINDLE PAIRING (this device shows a code, waits to be linked) -->
+<div id="lichess-pairing-screen" class="screen" style="display:none;">
+    <div class="splash-inner">
+        <h2>Pair This Device</h2>
+        <p class="hint">On your phone or computer, open this same site, log in with Lichess, choose "Link Another Device", and enter this code:</p>
+        <div class="room-code" id="pairing-code-display">------</div>
+        <p class="hint">This screen updates automatically once you've entered the code elsewhere.</p>
+        <p class="error-text" id="pairing-error"></p>
+        <a href="javascript:void(0)" class="text-link" id="btn-pairing-cancel">&laquo; Cancel</a>
+    </div>
+</div>
+
+<!-- LICHESS: LINK ANOTHER DEVICE (run on the already-logged-in phone/PC) -->
+<div id="lichess-link-device-screen" class="screen" style="display:none;">
+    <div class="splash-inner">
+        <h2>Link Another Device</h2>
+        <p class="hint">Enter the code shown on the other device (e.g. your Kindle).</p>
+        <input type="text" id="link-device-code-input" class="code-input" maxlength="6" autocapitalize="characters" autocomplete="off">
+        <div class="menu-buttons">
+            <a href="javascript:void(0)" class="big-btn" id="btn-link-device-submit">Link Device</a>
+        </div>
+        <p class="error-text" id="link-device-error"></p>
+        <a href="javascript:void(0)" class="text-link" id="btn-link-device-back">&laquo; Back</a>
     </div>
 </div>
 
@@ -64,11 +92,13 @@
         <h2>Play Lichess</h2>
         <p class="hint" id="lichess-me-text">Logged in</p>
         <div class="menu-buttons">
+            <a href="javascript:void(0)" class="big-btn" id="btn-lichess-find-match">Find Match</a>
             <a href="javascript:void(0)" class="big-btn" id="btn-lichess-challenge">Challenge a Player</a>
             <a href="javascript:void(0)" class="big-btn" id="btn-lichess-incoming">Incoming Challenges<span id="lichess-incoming-badge"></span></a>
             <a href="javascript:void(0)" class="big-btn" id="btn-lichess-my-games">My Games</a>
             <a href="javascript:void(0)" class="big-btn" id="btn-lichess-import-pgn">Import PGN</a>
             <a href="javascript:void(0)" class="big-btn" id="btn-lichess-profile">Profile</a>
+            <a href="javascript:void(0)" class="big-btn" id="btn-lichess-link-device">Link Another Device</a>
         </div>
         <p class="error-text" id="lichess-menu-error"></p>
         <a href="javascript:void(0)" class="text-link" id="btn-lichess-logout">Log Out</a>
@@ -116,6 +146,45 @@
         </div>
         <p class="error-text" id="lichess-challenge-error"></p>
         <a href="javascript:void(0)" class="text-link" id="btn-lichess-challenge-back">&laquo; Back</a>
+    </div>
+</div>
+
+<!-- LICHESS: FIND MATCH -->
+<div id="lichess-find-match-screen" class="screen" style="display:none;">
+    <div class="splash-inner">
+        <h2>Find Match</h2>
+        <p class="hint">Matches you with another player using this app and starts a real Lichess game between you.</p>
+
+        <p class="hint">Time control</p>
+        <select id="lichess-findmatch-timecontrol-select" class="tc-select">
+            <option value="60,0">Bullet &middot; 1+0</option>
+            <option value="180,0">Blitz &middot; 3+0</option>
+            <option value="300,0" selected>Blitz &middot; 5+0</option>
+            <option value="600,0">Rapid &middot; 10+0</option>
+            <option value="900,10">Rapid &middot; 15+10</option>
+        </select>
+
+        <p class="hint">Game type</p>
+        <div class="menu-buttons tri-buttons">
+            <a href="javascript:void(0)" class="big-btn small-btn choice-btn" id="btn-match-rated-casual">Casual</a>
+            <a href="javascript:void(0)" class="big-btn small-btn choice-btn" id="btn-match-rated-rated">Rated</a>
+        </div>
+
+        <div class="menu-buttons">
+            <a href="javascript:void(0)" class="big-btn" id="btn-find-match-submit">Find Match</a>
+        </div>
+        <p class="error-text" id="find-match-error"></p>
+        <a href="javascript:void(0)" class="text-link" id="btn-find-match-back">&laquo; Back</a>
+    </div>
+</div>
+
+<!-- LICHESS: SEARCHING FOR A MATCH -->
+<div id="lichess-matching-screen" class="screen" style="display:none;">
+    <div class="splash-inner">
+        <h2>Searching&hellip;</h2>
+        <p class="hint">Looking for another player. This can take a while if nobody else is searching right now.</p>
+        <p class="error-text" id="matching-error"></p>
+        <a href="javascript:void(0)" class="text-link" id="btn-matching-cancel">&laquo; Cancel Search</a>
     </div>
 </div>
 

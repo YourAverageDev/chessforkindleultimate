@@ -297,6 +297,44 @@ var LichessClient = (function () {
         request('GET', '/api/lichess/my-games', sessionToken, null, callback);
     }
 
+    /* ---- Kindle pairing ----
+     * pairingCreate/pairingStatus need no session (the Kindle doesn't have
+     * one yet - that's the whole point). pairingLink is called from the
+     * ALREADY-LOGGED-IN device, using its own session, same as any other
+     * authenticated call. adoptSession writes a session directly into
+     * storage without going through the OAuth callback - used once the
+     * Kindle's pairing poll comes back linked. */
+    function pairingCreate(callback) {
+        request('POST', '/api/lichess/pairing-create', null, null, callback);
+    }
+
+    function pairingStatus(code, callback) {
+        request('GET', '/api/lichess/pairing-status?code=' + encodeURIComponent(code), null, null, callback);
+    }
+
+    function pairingLink(sessionToken, code, callback) {
+        request('POST', '/api/lichess/pairing-link', sessionToken, { code: code }, callback);
+    }
+
+    function adoptSession(token, username) {
+        storageSet(LS_SESSION, token);
+        storageSet(LS_USERNAME, username);
+        storageSet(LS_PERFS, '{}'); /* showLichessMenu() refreshes this via fetchMe() right after */
+    }
+
+    /* ---- Find Match ---- */
+    function findMatchStart(sessionToken, opts, callback) {
+        request('POST', '/api/lichess/find-match-start', sessionToken, opts, callback);
+    }
+
+    function findMatchPoll(sessionToken, ticketId, callback) {
+        request('GET', '/api/lichess/find-match-poll?ticketId=' + encodeURIComponent(ticketId), sessionToken, null, callback);
+    }
+
+    function findMatchCancel(sessionToken, ticketId, callback) {
+        request('POST', '/api/lichess/find-match-cancel', sessionToken, { ticketId: ticketId }, callback);
+    }
+
     /* Watch Games (TV) and Position Analysis are both public - no session
      * needed, same as the puzzle endpoints. */
     function fetchTvChannels(callback) {
@@ -333,6 +371,13 @@ var LichessClient = (function () {
         fetchDailyPuzzle: fetchDailyPuzzle,
         fetchNextPuzzle: fetchNextPuzzle,
         fetchMyGames: fetchMyGames,
+        pairingCreate: pairingCreate,
+        pairingStatus: pairingStatus,
+        pairingLink: pairingLink,
+        adoptSession: adoptSession,
+        findMatchStart: findMatchStart,
+        findMatchPoll: findMatchPoll,
+        findMatchCancel: findMatchCancel,
         fetchTvChannels: fetchTvChannels,
         fetchWatchGame: fetchWatchGame,
         fetchExplorer: fetchExplorer,

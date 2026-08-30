@@ -549,6 +549,203 @@ async function handleTablebase(req, res) {
     });
 }
 
+/* ---- Kindle pairing ----
+ * See _lichess.js's "Kindle pairing" section for the why. The Kindle calls
+ * pairing-create (no auth - it has no session yet) and polls pairing-status
+ * with the code it got back; a modern, already-logged-in device calls
+ * pairing-link with that code plus ITS OWN session (via the normal
+ * X-Session-Token auth every other endpoint uses). Nothing here talks to
+ * lichess.org directly - it's pure bookkeeping over the existing session
+ * store, reusing requireSession/getSessionByToken exactly as every other
+ * authenticated action does. */
+
+async function handlePairingCreate(req, res) {
+    if (req.method !== 'POST') { return lichess.sendJson(res, 405, { error: 'method_not_allowed' }); }
+    var code = await lichess.createPairCode();
+    return lichess.sendJson(res, 200, { code: code });
+}
+
+async function handlePairingStatus(req, res) {
+    if (req.method !== 'GET') { return lichess.sendJson(res, 405, { error: 'method_not_allowed' }); }
+    var code = (req.query && req.query.code || '').toString().toUpperCase();
+    if (!code) { return lichess.sendJson(res, 400, { error: 'missing_code' }); }
+
+    var record = await lichess.getPairCode(code);
+    if (!record) { return lichess.sendJson(res, 200, { found: false }); }
+    if (!record.linked) { return lichess.sendJson(res, 200, { found: true, linked: false }); }
+
+    /* One-time use: consume the code now that the Kindle has picked up the
+     * session, so it can't be replayed by anyone who happened to see it. */
+    await lichess.deletePairCode(code);
+    return lichess.sendJson(res, 200, { found: true, linked: true, sessionToken: record.sessionToken, username: record.username });
+}
+
+async function handlePairingLink(req, res) {
+    if (req.method !== 'POST') { return lichess.sendJson(res, 405, { error: 'method_not_allowed' }); }
+    var auth = await lichess.requireSession(req);
+    if (!auth) { return lichess.sendJson(res, 401, { error: 'not_logged_in' }); }
+
+    var body = await lichess.readJsonBody(req);
+    var code = (body.code || '').toString().toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (!code) { return lichess.sendJson(res, 400, { error: 'missing_code' }); }
+
+    var record = await lichess.getPairCode(code);
+    if (!record) { return lichess.sendJson(res, 400, { error: 'invalid_or_expired_code' }); }
+
+    /* Hands the Kindle the SAME opaque session token this device is using -
+     * not a new one, and never the real Lichess access token underneath it
+     * (that stays server-side either way, exactly as it already does for
+     * every other client). Logging out from either device ends the shared
+     * session for both, which is the expected behavior for a "linked"
+     * device rather than a surprise. */
+    await lichess.linkPairCode(code, auth.token, auth.session.username);
+    return lichess.sendJson(res, 200, { ok: true });
+}
+
+/* ---- Find Match ----
+ * Lichess's own seek API (POST /api/board/seek) requires holding a single
+ * HTTP request open until a match or cancellation happens, which fits
+ * neither a Vercel serverless function (hard execution time limit) nor
+ * this app's polling-only client architecture - see _lichess.js's "Find
+ * Match queue" section. So this matches two of the app's own logged-in
+ * users against each other and creates a real Lichess challenge between
+ * them with lichessFetch, the same primitive every other Lichess action in
+ * this file already uses - no existing challenge/game code changes at all,
+ * this just orchestrates two calls to it using two different sessions. */
+
+async function createAndAcceptChallenge(challengerSession, accepterSession, clockLimitSec, clockIncrementSec, rated) {
+    var createResult = await lichess.lichessFetch(challengerSession.accessToken, '/api/challenge/' + encodeURIComponent(accepterSession.username), {
+        method: 'POST',
+        form: { rated: rated, 'clock.limit': clockLimitSec, 'clock.increment': clockIncrementSec, color: 'random', variant: 'standard' }
+    });
+    if (!createResult.ok || !createResult.data || !createResult.data.id) {
+        throw new Error('challenge_create_failed: ' + JSON.stringify(createResult.data));
+    }
+    var challengeId = createResult.data.id;
+
+    var acceptResult = await lichess.lichessFetch(accepterSession.accessToken, '/api/challenge/' + encodeURIComponent(challengeId) + '/accept', { method: 'POST' });
+    if (!acceptResult.ok) {
+        throw new Error('challenge_accept_failed: ' + JSON.stringify(acceptResult.data));
+    }
+    return challengeId; /* shares its id with the resulting game, per the same convention challenge-status already relies on */
+}
+
+/* Called from both find-match-start (so two near-simultaneous searchers
+ * can match immediately) and find-match-poll (so matching also completes
+ * lazily on a later tick, regardless of timing) - same lazy-check pattern
+ * api/_room.js already uses for online-room clock timeouts. Not
+ * transactional (Upstash's plain REST API has no MULTI/WATCH here), so two
+ * concurrent polls could in principle both grab the same third ticket -
+ * for an app this size that's an acceptable, cheaply-mitigated risk (the
+ * re-check right before creating the challenge below) rather than
+ * something worth a distributed lock over. */
+async function tryMatchTicket(myTicketId) {
+    var myTicket = await lichess.getMatchTicket(myTicketId);
+    if (!myTicket) { return null; }
+    if (myTicket.matchedGameId) { return myTicket; }
+
+    var ids = await lichess.listMatchQueueIds();
+    for (var i = 0; i < ids.length; i++) {
+        var otherId = ids[i];
+        if (otherId === myTicketId) { continue; }
+
+        var other = await lichess.getMatchTicket(otherId);
+        if (!other || other.matchedGameId) {
+            await lichess.removeFromMatchQueue(otherId); /* stale, expired, or already paired elsewhere - clean up lazily */
+            continue;
+        }
+        if (other.username === myTicket.username) { continue; } /* don't match a user against their own other device */
+        if (other.timeControlSec !== myTicket.timeControlSec || other.incrementSec !== myTicket.incrementSec || other.rated !== myTicket.rated) { continue; }
+
+        var mySession = await lichess.getSessionByToken(myTicket.sessionToken);
+        var otherSession = await lichess.getSessionByToken(other.sessionToken);
+        if (!mySession || !otherSession) { continue; } /* one side's login expired - try another candidate */
+
+        try {
+            /* Best-effort re-check immediately before creating the game,
+             * to shrink (not eliminate) the race window described above. */
+            var recheckOther = await lichess.getMatchTicket(otherId);
+            if (!recheckOther || recheckOther.matchedGameId) { continue; }
+
+            var gameId = await createAndAcceptChallenge(mySession, otherSession, myTicket.timeControlSec, myTicket.incrementSec, myTicket.rated);
+
+            myTicket.matchedGameId = gameId;
+            other.matchedGameId = gameId;
+            await lichess.saveMatchTicket(myTicketId, myTicket);
+            await lichess.saveMatchTicket(otherId, other);
+            await lichess.removeFromMatchQueue(myTicketId);
+            await lichess.removeFromMatchQueue(otherId);
+            return myTicket;
+        } catch (e) {
+            continue; /* this candidate didn't pan out - try the next one instead of failing the whole poll */
+        }
+    }
+    return myTicket;
+}
+
+async function handleFindMatchStart(req, res) {
+    if (req.method !== 'POST') { return lichess.sendJson(res, 405, { error: 'method_not_allowed' }); }
+    var auth = await lichess.requireSession(req);
+    if (!auth) { return lichess.sendJson(res, 401, { error: 'not_logged_in' }); }
+
+    var body = await lichess.readJsonBody(req);
+    var timeControlSec = parseInt(body.timeControlSec, 10);
+    var incrementSec = parseInt(body.incrementSec, 10);
+    var rated = !!body.rated;
+    if (isNaN(timeControlSec) || isNaN(incrementSec)) { return lichess.sendJson(res, 400, { error: 'bad_request' }); }
+
+    var ticketId = lichess.randomTicketId();
+    await lichess.saveMatchTicket(ticketId, {
+        sessionToken: auth.token,
+        username: auth.session.username,
+        timeControlSec: timeControlSec,
+        incrementSec: incrementSec,
+        rated: rated,
+        createdAt: Date.now(),
+        matchedGameId: null
+    });
+    await lichess.addToMatchQueue(ticketId);
+
+    var result = await tryMatchTicket(ticketId);
+    var matched = !!(result && result.matchedGameId);
+    return lichess.sendJson(res, 200, { ticketId: ticketId, matched: matched, gameId: matched ? result.matchedGameId : null });
+}
+
+async function handleFindMatchPoll(req, res) {
+    if (req.method !== 'GET') { return lichess.sendJson(res, 405, { error: 'method_not_allowed' }); }
+    var auth = await lichess.requireSession(req);
+    if (!auth) { return lichess.sendJson(res, 401, { error: 'not_logged_in' }); }
+
+    var ticketId = (req.query && req.query.ticketId || '').toString();
+    if (!ticketId) { return lichess.sendJson(res, 400, { error: 'missing_ticket_id' }); }
+
+    var result = await tryMatchTicket(ticketId);
+    if (!result) { return lichess.sendJson(res, 200, { found: false }); }
+    var matched = !!result.matchedGameId;
+    return lichess.sendJson(res, 200, { found: true, matched: matched, gameId: matched ? result.matchedGameId : null });
+}
+
+async function handleFindMatchCancel(req, res) {
+    if (req.method !== 'POST') { return lichess.sendJson(res, 405, { error: 'method_not_allowed' }); }
+    var auth = await lichess.requireSession(req);
+    if (!auth) { return lichess.sendJson(res, 401, { error: 'not_logged_in' }); }
+
+    var body = await lichess.readJsonBody(req);
+    var ticketId = (body.ticketId || '').toString();
+    if (!ticketId) { return lichess.sendJson(res, 400, { error: 'missing_ticket_id' }); }
+
+    var ticket = await lichess.getMatchTicket(ticketId);
+    if (ticket && ticket.matchedGameId) {
+        /* A match already went through - the game is real, don't discard
+         * it just because a cancel and a match crossed in flight. */
+        return lichess.sendJson(res, 200, { ok: true, alreadyMatched: true, gameId: ticket.matchedGameId });
+    }
+
+    await lichess.removeFromMatchQueue(ticketId);
+    await lichess.deleteMatchTicket(ticketId);
+    return lichess.sendJson(res, 200, { ok: true });
+}
+
 var ACTIONS = {
     'oauth-exchange': handleOauthExchange,
     'me': handleMe,
@@ -567,7 +764,13 @@ var ACTIONS = {
     'tv-channels': handleTvChannels,
     'watch-game': handleWatchGame,
     'explorer': handleExplorer,
-    'tablebase': handleTablebase
+    'tablebase': handleTablebase,
+    'pairing-create': handlePairingCreate,
+    'pairing-status': handlePairingStatus,
+    'pairing-link': handlePairingLink,
+    'find-match-start': handleFindMatchStart,
+    'find-match-poll': handleFindMatchPoll,
+    'find-match-cancel': handleFindMatchCancel
 };
 
 module.exports = async function handler(req, res) {

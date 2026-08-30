@@ -235,6 +235,48 @@ Specific things that couldn't be confirmed and are worth checking first:
 - **Undo is hidden for Lichess games** (same treatment as this app's own
   online rooms) since a real Lichess game can't be locally rewound.
 
+### Kindle pairing and Find Match
+
+Old Kindle browsers (6th-gen "Experimental Browser" and similar) often
+can't complete a TLS handshake with `lichess.org` at all — outdated
+cipher suites, TLS version, or SNI support. Redirecting one to Lichess's
+OAuth page, like the normal "Log In with Lichess" button does, would just
+fail to load. So the Kindle never does that:
+
+- **Pairing.** The login screen has a second option, "Pair via Code."
+  Tapping it asks our own server (never lichess.org) for a short code and
+  displays it. On a phone or PC, you log in normally, tap "Link Another
+  Device," and type that code in. The server then hands the Kindle the
+  **same opaque session token** the phone already got from the normal
+  OAuth flow (see `api/lichess/_lichess.js`) — not the real Lichess access
+  token, which never leaves the server for any client, Kindle or
+  otherwise. A pairing code is single-use (consumed the moment the Kindle
+  picks it up) and expires after 10 minutes if never claimed. From that
+  point on, the Kindle is a completely ordinary logged-in client — every
+  existing Lichess feature (challenges, My Games, puzzles, watching,
+  Find Match) works with zero special-casing for it.
+- **Find Match.** Lichess's own matchmaking (`POST /api/board/seek`) has
+  to keep a single HTTP request open until a match or cancellation
+  happens — that fits neither a Vercel serverless function (hard
+  execution-time limit) nor this app's polling-only client architecture,
+  so it wasn't used. Instead, Find Match keeps its own short-lived queue
+  (in the same Redis store as everything else): two of this app's users
+  searching for the same time control/rated setting get matched with each
+  other, and the server creates a real Lichess challenge between them
+  (`api/lichess/[action].js`'s `createAndAcceptChallenge`, using the exact
+  same `lichessFetch` call every other Lichess action already uses) and
+  auto-accepts it. The resulting game is a completely normal Lichess game
+  once found — this only changes how the two players are introduced to
+  each other, not anything about how the game itself is played. Matching
+  is checked lazily on each search/poll rather than via a background job
+  (serverless functions have no persistent process to run one in), the
+  same pattern `api/_room.js` already uses for online-room clock timeouts.
+  This part of the queue logic is pure bookkeeping over this app's own
+  Redis store, so — unlike the rest of the Lichess integration — it didn't
+  need to be verified against Lichess's own API docs, only the challenge
+  create/accept calls it drives did (same caveat as the rest of this
+  section).
+
 ### Setup
 
 Same Redis-backed store as the rest of online play (see below) - no

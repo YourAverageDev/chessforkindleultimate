@@ -67,6 +67,101 @@ function randomSessionToken() {
     return crypto.randomBytes(24).toString('hex');
 }
 
+/* ---- Kindle pairing ----
+ * Old Kindle browsers (6th-gen "Experimental Browser" and similar) can't
+ * complete a TLS handshake with lichess.org at all in a lot of cases, so
+ * the Kindle must never itself navigate to Lichess's OAuth page - that's
+ * the whole reason this exists. Instead: the Kindle asks us for a short
+ * code and displays it; a modern device that's already logged in (holds
+ * its own opaque session token from the normal OAuth flow) submits that
+ * code plus its session token to "link" it; the Kindle, polling the code's
+ * status, picks up that SAME opaque session token once linked and adopts
+ * it as its own. The Kindle never talks to lichess.org and never sees a
+ * real Lichess access token - only the same kind of opaque session token
+ * every other client already uses (see requireSession below), which is
+ * exactly as safe to hand to a browser as it always has been. */
+var PAIR_CODE_TTL_SECONDS = 10 * 60; /* unclaimed/unlinked codes expire after 10 minutes */
+var PAIR_CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; /* no 0/O/1/I, same alphabet as online room codes */
+
+function pairCodeKey(code) { return 'lichesspair:' + code; }
+
+function randomPairCode() {
+    var out = '';
+    for (var i = 0; i < 6; i++) { out += PAIR_CODE_CHARS.charAt(Math.floor(Math.random() * PAIR_CODE_CHARS.length)); }
+    return out;
+}
+
+async function createPairCode() {
+    for (var attempt = 0; attempt < 8; attempt++) {
+        var code = randomPairCode();
+        var existing = await redisCommand(['GET', pairCodeKey(code)]);
+        if (!existing) {
+            await redisCommand(['SET', pairCodeKey(code), JSON.stringify({ linked: false, sessionToken: null, username: null }), 'EX', PAIR_CODE_TTL_SECONDS]);
+            return code;
+        }
+    }
+    throw new Error('Could not allocate a pairing code, please try again.');
+}
+
+async function getPairCode(code) {
+    var raw = await redisCommand(['GET', pairCodeKey(code)]);
+    return raw ? JSON.parse(raw) : null;
+}
+
+async function linkPairCode(code, sessionToken, username) {
+    await redisCommand(['SET', pairCodeKey(code), JSON.stringify({ linked: true, sessionToken: sessionToken, username: username }), 'EX', PAIR_CODE_TTL_SECONDS]);
+}
+
+async function deletePairCode(code) {
+    await redisCommand(['DEL', pairCodeKey(code)]);
+}
+
+/* ---- Find Match queue ----
+ * Lichess's own "seek" API (POST /api/board/seek) matches against Lichess's
+ * whole player base, but the request has to stay open until a match is
+ * found or cancelled - a shape that fits neither a Vercel serverless
+ * function (hard execution time limit) nor this app's polling-only client
+ * architecture. So matchmaking instead pairs two of this app's OWN users
+ * who are both searching, then creates a real Lichess challenge between
+ * them (via the same lichessFetch already used by the manual "Challenge a
+ * Player" flow) and auto-accepts it - the resulting game is a completely
+ * normal Lichess game once found. See [action].js's tryMatchTicket for the
+ * matching itself; these are just the Redis primitives it's built on. */
+var MATCH_QUEUE_KEY = 'lichessmatchqueue';
+var MATCH_TICKET_TTL_SECONDS = 10 * 60;
+
+function matchTicketKey(id) { return 'lichessmatchticket:' + id; }
+
+function randomTicketId() {
+    return crypto.randomBytes(12).toString('hex');
+}
+
+async function getMatchTicket(id) {
+    var raw = await redisCommand(['GET', matchTicketKey(id)]);
+    return raw ? JSON.parse(raw) : null;
+}
+
+async function saveMatchTicket(id, ticket) {
+    await redisCommand(['SET', matchTicketKey(id), JSON.stringify(ticket), 'EX', MATCH_TICKET_TTL_SECONDS]);
+}
+
+async function deleteMatchTicket(id) {
+    await redisCommand(['DEL', matchTicketKey(id)]);
+}
+
+async function addToMatchQueue(id) {
+    await redisCommand(['SADD', MATCH_QUEUE_KEY, id]);
+}
+
+async function removeFromMatchQueue(id) {
+    await redisCommand(['SREM', MATCH_QUEUE_KEY, id]);
+}
+
+async function listMatchQueueIds() {
+    var ids = await redisCommand(['SMEMBERS', MATCH_QUEUE_KEY]);
+    return ids || [];
+}
+
 /* Lichess speaks full-word colors ("white"/"black"); this app's own chess
  * engine and every other mode (2 Player, vs Computer, our own online
  * rooms) use single-char 'w'/'b' throughout - normalize at this boundary
@@ -255,5 +350,16 @@ module.exports = {
     formEncode: formEncode,
     readJsonBody: readJsonBody,
     sendJson: sendJson,
-    requireSession: requireSession
+    requireSession: requireSession,
+    createPairCode: createPairCode,
+    getPairCode: getPairCode,
+    linkPairCode: linkPairCode,
+    deletePairCode: deletePairCode,
+    randomTicketId: randomTicketId,
+    getMatchTicket: getMatchTicket,
+    saveMatchTicket: saveMatchTicket,
+    deleteMatchTicket: deleteMatchTicket,
+    addToMatchQueue: addToMatchQueue,
+    removeFromMatchQueue: removeFromMatchQueue,
+    listMatchQueueIds: listMatchQueueIds
 };
