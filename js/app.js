@@ -1619,6 +1619,25 @@ function beginWatchGame(gameId) {
     OnlineClient.startPolling(function (cb) { LichessClient.fetchWatchGame(watchGameId, cb); }, 3000, onWatchGameUpdate);
 }
 
+/* watch_game_failed alone (the error CODE) says nothing about WHY - the
+ * actually useful part is Lichess's own response, which handleWatchGame
+ * already forwards as err.data.detail/err.data.status but the UI was
+ * never showing. Without a way to read this app's own Vercel logs, this
+ * is the only way to see the real underlying error at all. */
+function describeWatchGameError(err) {
+    if (!err) { return 'unknown error'; }
+    var code = (err.data && err.data.error) || ('http ' + err.status);
+    var bits = [code];
+    if (err.data && typeof err.data.status === 'number') { bits.push('lichess status ' + err.data.status); }
+    if (err.data && err.data.detail !== undefined && err.data.detail !== null) {
+        var detailText;
+        try { detailText = JSON.stringify(err.data.detail); } catch (e) { detailText = String(err.data.detail); }
+        if (detailText && detailText.length > 200) { detailText = detailText.substring(0, 200) + '…'; }
+        bits.push(detailText);
+    }
+    return bits.join(' — ');
+}
+
 function onWatchGameUpdate(err, data) {
     if (err || !data) {
         /* This used to fail completely silently - the board would just
@@ -1633,14 +1652,17 @@ function onWatchGameUpdate(err, data) {
              * back verbatim - this app has no way to check its own
              * server logs, so this is the fastest path to diagnosing
              * which specific call is failing and why. */
-            var detail = (err && err.data && err.data.error) ? err.data.error : ((err && err.status) ? ('http ' + err.status) : 'unknown error');
-            setText(document.getElementById('puzzle-info'), 'Error: ' + detail + '. Use Stop Watching to pick another game.');
+            setText(document.getElementById('puzzle-info'), 'Error: ' + describeWatchGameError(err) + '. Use Stop Watching to pick another game.');
         }
         return;
     }
     watchPollFailCount = 0;
 
-    var replay = ChessEngine.replayFullGame(data.moves || '');
+    /* Prefer the full PGN text (parsed with the same header-aware parser
+     * already used for Import PGN/My Games) over a separate bare-moves
+     * field - see api/lichess/[action].js's handleWatchGame for why. */
+    var movetext = (data.pgn && data.pgn.length) ? data.pgn : (data.moves || '');
+    var replay = ChessEngine.replayFullGame(movetext);
     if (replay) {
         currentState = replay.states[replay.states.length - 1];
         var lastMv = replay.moves.length ? replay.moves[replay.moves.length - 1] : null;

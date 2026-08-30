@@ -502,12 +502,17 @@ async function handleWatchGame(req, res) {
      * lichessFetch's JSON.parse on that fails and silently falls back to
      * { raw: text }, and every field read below then comes back
      * empty/null - `ok:true` the whole time, since the HTTP call itself
-     * succeeded. That looked exactly like "the board never loads": an
-     * always-empty move list keeps the board frozen at the starting
-     * position forever, with no error ever surfacing. Every other export
-     * call in this file already includes this param (see handleGameState,
-     * handleMyGames) - this one was just missing it. */
-    var result = await lichess.lichessFetch(null, '/api/game/export/' + encodeURIComponent(gameId) + '?moves=true&pgnInJson=true');
+     * succeeded. This previously ALSO added `moves=true` on top, on the
+     * assumption Lichess would then include a separate bare-SAN `moves`
+     * field - but that combination consistently failed live, while
+     * handleGameState's plain `?pgnInJson=true` (no `moves=true`) call
+     * against this exact same endpoint hasn't been reported broken. Since
+     * this app already has a proven, unit-tested PGN-with-headers parser
+     * (chessEngine.js's replayFullGame, built for Import PGN and My
+     * Games), the safer fix is to stop asking for a separate `moves`
+     * field at all and just parse the full PGN text Lichess already
+     * returns for `pgnInJson=true` - one fewer unverified assumption. */
+    var result = await lichess.lichessFetch(null, '/api/game/export/' + encodeURIComponent(gameId) + '?pgnInJson=true');
     if (!result.ok) {
         console.error('watch-game: export failed for ' + gameId + ' (from ' + rawGameId + '): status ' + result.status + ' ' + JSON.stringify(result.data));
         return lichess.sendJson(res, result.status || 502, { error: 'watch_game_failed', status: result.status, detail: result.data });
@@ -523,13 +528,17 @@ async function handleWatchGame(req, res) {
     var players = g.players || {};
     var white = players.white || {};
     var black = players.black || {};
+    /* Same defensive handling as handleGameState: some Lichess API
+     * versions return `status` as a plain string, others as {id, name}. */
+    var statusValue = (g.status && typeof g.status === 'object') ? g.status.name : g.status;
     return lichess.sendJson(res, 200, {
         gameId: g.id || gameId,
-        status: g.status || null,
+        status: statusValue || null,
         winner: lichess.normalizeColor(g.winner),
         white: { name: (white.user && white.user.name) || 'Anonymous', rating: (typeof white.rating === 'number') ? white.rating : null },
         black: { name: (black.user && black.user.name) || 'Anonymous', rating: (typeof black.rating === 'number') ? black.rating : null },
-        moves: g.moves || '',
+        pgn: g.pgn || '',
+        moves: g.moves || '', /* kept as a fallback in case a future response ever includes it directly */
         speed: g.speed || null,
         rated: !!g.rated
     });
