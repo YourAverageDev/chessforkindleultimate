@@ -506,7 +506,16 @@ var ChessEngine = (function () {
      * plus a trailing result token, since none of that could be checked
      * against the real API while writing this. */
     function tokenizePgnMoves(pgn) {
-        var raw = (pgn || '').split(/\s+/);
+        /* Strip whole header-tag lines ("[Event \"...\"]") before splitting
+         * into tokens - a pasted PGN (Game Replay's "Import PGN") normally
+         * has these, and naively word-splitting a tag line like
+         * `[Event "Rated Blitz game"]` would otherwise produce garbage
+         * tokens ("[Event", "\"Rated", ...) that abort the whole replay on
+         * the very first token. */
+        var noHeaders = (pgn || '').split(/\r?\n/).filter(function (line) {
+            return !/^\s*\[.*\]\s*$/.test(line);
+        }).join(' ');
+        var raw = noHeaders.split(/\s+/);
         var out = [];
         for (var i = 0; i < raw.length; i++) {
             var t = raw[i].replace(/^\d+\.+/, '').replace(/^\s+|\s+$/g, '');
@@ -531,6 +540,28 @@ var ChessEngine = (function () {
             state = makeMove(state, mv);
         }
         return state;
+    }
+
+    /* Replays an entire game's movetext from the start, returning every
+     * intermediate position (for Game Replay's prev/next stepping) rather
+     * than just the final one. states[0] is the start position, states[i]
+     * is the position after moves[i-1]/sanTokens[i-1]. Returns null if any
+     * move can't be resolved (malformed PGN, or a SAN construct this
+     * parser doesn't handle). Used for both a Lichess "My Games" entry's
+     * bare move list and a user-pasted full PGN (Import PGN). */
+    function replayFullGame(pgn) {
+        var state = createInitialState();
+        var tokens = tokenizePgnMoves(pgn);
+        var states = [state];
+        var moves = [];
+        for (var i = 0; i < tokens.length; i++) {
+            var mv = sanToMove(state, tokens[i]);
+            if (!mv) { return null; }
+            state = makeMove(state, mv);
+            states.push(state);
+            moves.push(mv);
+        }
+        return { states: states, moves: moves, sanTokens: tokens };
     }
 
     /* Finds the legal move (with correct flag/captured info - unlike a bare
@@ -563,6 +594,7 @@ var ChessEngine = (function () {
         sanToMove: sanToMove,
         tokenizePgnMoves: tokenizePgnMoves,
         replayPgnToPly: replayPgnToPly,
+        replayFullGame: replayFullGame,
         findMoveByUci: findMoveByUci
     };
 
