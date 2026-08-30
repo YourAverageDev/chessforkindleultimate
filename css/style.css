@@ -407,3 +407,84 @@ html, body {
  * app.js measures the actual viewport on the device and sets each cell's
  * real size inline, so the board fills the available screen instead of
  * being stuck at a fixed size that looks tiny on a full Kindle screen. */
+
+/* ---- captured pieces tray ---- */
+
+#captured-row {
+    min-height: 20px;
+    margin-bottom: 4px;
+}
+
+.captured-line {
+    display: block;
+    min-height: 18px;
+    line-height: 18px;
+}
+
+.cap-piece-icon {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    background-repeat: no-repeat;
+    background-size: 600% 200%;
+    vertical-align: middle;
+}
+
+/* ---- move history panel ---- */
+
+#move-history {
+    max-width: 480px;
+    max-height: 70px;
+    overflow-y: auto;
+    margin: 4px auto 0 auto;
+    padding: 6px 8px;
+    font-size: 12px;
+    line-height: 1.5;
+    text-align: left;
+    color: #333333;
+    background: #f5f5e8;
+    border: 1px solid #cccccc;
+}
+
+/* ---- Enhanced Mode ----
+ * Purely cosmetic (bigger, easier-to-tap controls and clearer clocks) -
+ * an opt-in, localStorage-persisted body class toggled from app.js. Off
+ * by default, so nothing here changes the default look for anyone who
+ * hasn't turned it on, Kindle included; turning it on is still just
+ * plain font-size/padding, so it renders fine on old WebKit too. */
+
+body.enhanced-mode .ctrl-btn {
+    font-size: 16px;
+    padding: 13px 16px;
+    margin: 5px;
+}
+
+body.enhanced-mode .clock-box {
+    font-size: 21px;
+    padding: 9px 18px;
+    border-width: 3px;
+}
+
+body.enhanced-mode #status-bar {
+    font-size: 18px;
+    padding: 11px 4px;
+}
+
+body.enhanced-mode .big-btn {
+    font-size: 19px;
+    padding: 19px 12px;
+}
+
+body.enhanced-mode .small-btn {
+    padding: 15px 2px;
+}
+
+body.enhanced-mode .cap-piece-icon {
+    width: 20px;
+    height: 20px;
+}
+
+body.enhanced-mode #move-history {
+    font-size: 14px;
+    max-height: 90px;
+}

@@ -42,6 +42,22 @@ var positionCounts = {};
 var lastMove = null;
 var gameOver = false;
 
+/* Enhanced Mode: a purely cosmetic, opt-in, localStorage-persisted
+ * preference (off by default, so Kindle's default experience is
+ * untouched) that makes controls and clocks bigger/easier to tap for
+ * whoever turns it on - just a body class toggling CSS rules in
+ * style.css, no behavior change, so it's exactly as safe on old Kindle
+ * WebKit as the rest of this app's plain CSS (and harmless even if a
+ * Kindle user does turn it on). */
+var enhancedMode = false;
+
+/* Move history (SAN) for whichever game/puzzle/replay is currently on
+ * screen - populated differently per mode (see each mode's comments
+ * below) since they differ in whether a full move list is available at
+ * once (replay, puzzles) or arrives incrementally (live play). */
+var moveSanHistory = [];
+var lichessLastAppliedMoveUci = null; /* dedupes/detects new opponent moves in applyLichessState */
+
 /* Online play state. onlineColor is which side this browser is playing;
  * onlineAppliedMoveCount tracks how many of the server's authoritative
  * moves have been applied locally, so polling only has to notice "the
@@ -132,6 +148,87 @@ var seekSelectedRated = false;
 function setText(el, str) {
     if (el.textContent !== undefined) { el.textContent = str; }
     else { el.innerText = str; }
+}
+
+/* ---- Enhanced Mode ---- */
+
+function loadEnhancedModePref() {
+    try { return window.localStorage.getItem('chess_enhanced_mode') === '1'; } catch (e) { return false; }
+}
+
+function saveEnhancedModePref(v) {
+    try { window.localStorage.setItem('chess_enhanced_mode', v ? '1' : '0'); } catch (e) { /* no persistence available - just won't be remembered */ }
+}
+
+function applyEnhancedModeClass() {
+    var body = document.body;
+    var cls = (body.className || '').replace(/(^|\s)enhanced-mode(\s|$)/g, ' ').replace(/^\s+|\s+$/g, '');
+    body.className = enhancedMode ? (cls + ' enhanced-mode').replace(/^\s+/, '') : cls;
+}
+
+function updateEnhancedModeLabels() {
+    var splashBtn = document.getElementById('btn-enhanced-toggle');
+    if (splashBtn) { setText(splashBtn, enhancedMode ? 'Enhanced Mode: On' : 'Enhanced Mode: Off'); }
+    var gameBtn = document.getElementById('btn-enhanced-toggle-game');
+    if (gameBtn) { setText(gameBtn, enhancedMode ? 'Enhanced: On' : 'Enhanced: Off'); }
+}
+
+function toggleEnhancedMode() {
+    enhancedMode = !enhancedMode;
+    saveEnhancedModePref(enhancedMode);
+    applyEnhancedModeClass();
+    updateEnhancedModeLabels();
+    /* Bigger clocks/controls change how much vertical space is left for
+     * the board - only matters while the board is actually visible. */
+    if (document.getElementById('game-screen').style.display !== 'none') { sizeBoard(); }
+}
+
+/* ---- move history + captured pieces (all modes) ---- */
+
+function renderMoveHistory() {
+    var container = document.getElementById('move-history');
+    if (!container) { return; }
+    if (!moveSanHistory || moveSanHistory.length === 0) {
+        container.style.display = 'none';
+        setText(container, '');
+        return;
+    }
+    container.style.display = 'block';
+    var text = '';
+    for (var i = 0; i < moveSanHistory.length; i++) {
+        if (i % 2 === 0) { text += (Math.floor(i / 2) + 1) + '. '; }
+        text += moveSanHistory[i] + ' ';
+    }
+    setText(container, text.replace(/\s+$/, ''));
+    container.scrollTop = container.scrollHeight; /* keep the latest move in view */
+}
+
+var CAP_PIECE_ORDER = { q: 0, r: 1, b: 2, n: 3, p: 4 };
+
+function renderCapturedRow(container, pieceTypes, color) {
+    if (!container) { return; }
+    container.innerHTML = '';
+    var sorted = pieceTypes.slice().sort(function (a, b) { return CAP_PIECE_ORDER[a] - CAP_PIECE_ORDER[b]; });
+    for (var i = 0; i < sorted.length; i++) {
+        var span = document.createElement('span');
+        span.className = 'cap-piece-icon';
+        span.style.backgroundImage = "url('/img/pieces.png')";
+        span.style.backgroundPosition = SPRITE_COL[sorted[i]] + ' ' + SPRITE_ROW[color];
+        container.appendChild(span);
+    }
+}
+
+/* Derived purely from the current board (see chessEngine.js's
+ * computeCapturedPieces) - works identically for every mode with no
+ * per-mode capture tracking needed, so this can just be called from
+ * updateBoardDisplay() itself and stay correct everywhere for free. */
+function renderCapturedPieces() {
+    var whiteRow = document.getElementById('captured-by-white');
+    var blackRow = document.getElementById('captured-by-black');
+    if (!whiteRow || !blackRow || !currentState) { return; }
+    var cap = ChessEngine.computeCapturedPieces(currentState);
+    renderCapturedRow(whiteRow, cap.capturedFromBlack, 'b'); /* white's trophies are black pieces */
+    renderCapturedRow(blackRow, cap.capturedFromWhite, 'w'); /* black's trophies are white pieces */
 }
 
 var ALL_SCREENS = [
@@ -241,13 +338,17 @@ function sizeBoard() {
     var lichessClock = document.getElementById('lichess-clock');
     var banner = document.getElementById('reconnect-banner');
     var puzzleInfo = document.getElementById('puzzle-info');
+    var capturedRow = document.getElementById('captured-row');
+    var moveHistory = document.getElementById('move-history');
     var statusH = (statusBar && statusBar.offsetHeight) || 30;
     var controlsH = (controls && controls.offsetHeight) || 60;
     var clocksH = (clocks && clocks.offsetHeight) || 0; /* 0 when hidden (display:none) */
     var lichessClockH = (lichessClock && lichessClock.offsetHeight) || 0;
     var bannerH = (banner && banner.offsetHeight) || 0;
     var puzzleInfoH = (puzzleInfo && puzzleInfo.offsetHeight) || 0;
-    var reserved = statusH + controlsH + clocksH + lichessClockH + bannerH + puzzleInfoH + 40; /* margins/padding breathing room */
+    var capturedRowH = (capturedRow && capturedRow.offsetHeight) || 0;
+    var moveHistoryH = (moveHistory && moveHistory.offsetHeight) || 0; /* 0 when hidden (display:none) */
+    var reserved = statusH + controlsH + clocksH + lichessClockH + bannerH + puzzleInfoH + capturedRowH + moveHistoryH + 40; /* margins/padding breathing room */
 
     var availableW = vw - 12;
     var availableH = vh - reserved;
@@ -304,6 +405,8 @@ function updateBoardDisplay() {
             a.style.backgroundImage = 'none';
         }
     }
+
+    renderCapturedPieces();
 }
 
 function recomputeLegalMoves() {
@@ -377,6 +480,8 @@ function handleStatus(status) {
 
 function commitMove(mv) {
     if (gameOver || !mv) { return; }
+    moveSanHistory.push(ChessEngine.moveToSan(currentState, mv));
+    renderMoveHistory();
     historyStack.push(currentState);
     currentState = ChessEngine.makeMove(currentState, mv);
     lastMove = { from: mv.from, to: mv.to };
@@ -496,6 +601,7 @@ function startGame(selectedMode, level) {
     }
     currentState = ChessEngine.createInitialState();
     historyStack = [];
+    moveSanHistory = [];
     lastMove = null;
     gameOver = false;
     selectedSquare = null;
@@ -505,6 +611,7 @@ function startGame(selectedMode, level) {
     buildBoardTable();
     updateBoardDisplay();
     updateStatusText();
+    renderMoveHistory();
     applyModeControlVisibility();
     document.getElementById('lichess-clock').style.display = 'none';
     document.getElementById('puzzle-info').style.display = 'none';
@@ -624,6 +731,7 @@ function beginOnlineGame() {
     mode = 'online';
     currentState = ChessEngine.createInitialState();
     historyStack = [];
+    moveSanHistory = [];
     positionCounts = {};
     lastMove = null;
     gameOver = false;
@@ -635,6 +743,7 @@ function beginOnlineGame() {
     buildBoardTable();
     updateBoardDisplay();
     updateStatusText();
+    renderMoveHistory();
     applyModeControlVisibility();
     onlineTimerEnabled = false;
     clockTimeoutFetchFired = false;
@@ -653,6 +762,7 @@ function applyServerState(data) {
     var state = ChessEngine.createInitialState();
     var newLastMove = null;
     var counts = {};
+    var sans = [];
 
     function tally(s) {
         var key = ChessEngine.positionKey(s);
@@ -671,6 +781,7 @@ function applyServerState(data) {
             }
         }
         if (!found) { break; }
+        sans.push(ChessEngine.moveToSan(state, found));
         state = ChessEngine.makeMove(state, found);
         tally(state);
         newLastMove = { from: mv.from, to: mv.to };
@@ -680,9 +791,11 @@ function applyServerState(data) {
     lastMove = newLastMove;
     positionCounts = counts;
     onlineAppliedMoveCount = data.moves.length;
+    moveSanHistory = sans;
     selectedSquare = null;
     recomputeLegalMoves();
     updateBoardDisplay();
+    renderMoveHistory();
 
     applyTimerFields(data);
 
@@ -1060,6 +1173,8 @@ function beginLichessGame(gameId, color) {
     gameOver = false;
     selectedSquare = null;
     historyStack = [];
+    moveSanHistory = [];
+    lichessLastAppliedMoveUci = null;
     saveActiveLichessGame(gameId, color);
     flipped = (color === 'b');
     currentState = ChessEngine.createInitialState();
@@ -1067,6 +1182,7 @@ function beginLichessGame(gameId, color) {
     buildBoardTable();
     updateBoardDisplay();
     updateStatusText();
+    renderMoveHistory();
     applyModeControlVisibility();
     document.getElementById('lichess-clock').style.display = 'block';
     document.getElementById('chess-clocks').style.display = 'none';
@@ -1127,11 +1243,30 @@ function onLichessGameUpdate(err, data) {
 
 function applyLichessState(data) {
     if (data.active) {
+        /* Only a FEN snapshot is available here, not a full move list - so
+         * the running SAN history is built incrementally: whenever the
+         * server's lastMove differs from the last one already recorded,
+         * resolve it against the CURRENT (pre-update) position (still
+         * accurate, since it reflects everything up to the previously
+         * seen lastMove) and record its SAN before overwriting the state
+         * from the new FEN. Two real limitations, both acceptable: if
+         * more than one move landed between two polls, only the latest is
+         * ever seen (the position itself is still always correct, just a
+         * gap in the displayed history); and commitLichessMove already
+         * records its own optimistic move immediately, so this only ever
+         * fires for the OPPONENT's moves, not a redundant echo of ours. */
+        if (data.lastMove && data.lastMove !== lichessLastAppliedMoveUci) {
+            var legalNow = ChessEngine.generateLegalMoves(currentState);
+            var resolvedMv = ChessEngine.findMoveByUci(legalNow, data.lastMove);
+            if (resolvedMv) { moveSanHistory.push(ChessEngine.moveToSan(currentState, resolvedMv)); }
+            lichessLastAppliedMoveUci = data.lastMove;
+        }
         currentState = ChessEngine.stateFromFen(data.fen);
         lastMove = data.lastMove ? ChessEngine.uciToMove(data.lastMove) : null;
         selectedSquare = null;
         recomputeLegalMoves();
         updateBoardDisplay();
+        renderMoveHistory();
         updateLichessClockDisplay(data.secondsLeft, data.isMyTurn);
         updateStatusText();
         return;
@@ -1160,12 +1295,15 @@ function commitLichessMove(mv) {
     if (lichessMoveInFlight) { return; } /* a move is already in flight - never send a second one on top of it */
     var uci = ChessEngine.moveToUci(mv);
 
+    moveSanHistory.push(ChessEngine.moveToSan(currentState, mv));
+    lichessLastAppliedMoveUci = uci; /* so the next poll's echo of this same move isn't recorded twice */
     lichessMoveInFlight = true;
     currentState = ChessEngine.makeMove(currentState, mv);
     lastMove = { from: mv.from, to: mv.to };
     selectedSquare = null;
     recomputeLegalMoves();
     updateBoardDisplay();
+    renderMoveHistory();
     var localStatus = ChessEngine.getStatus(currentState, currentLegalMoves);
     updateStatusText(localStatus);
 
@@ -1279,6 +1417,7 @@ function startPuzzleFromData(data) {
     puzzleThemes = data.themes || [];
     currentState = puzzleState;
     historyStack = [];
+    moveSanHistory = []; /* just this solving attempt's moves, not the setup moves replayed to reach the puzzle position */
     lastMove = null;
     gameOver = false;
     selectedSquare = null;
@@ -1287,6 +1426,7 @@ function startPuzzleFromData(data) {
     buildBoardTable();
     updateBoardDisplay();
     updateStatusText();
+    renderMoveHistory();
     applyModeControlVisibility();
     document.getElementById('lichess-clock').style.display = 'none';
     document.getElementById('chess-clocks').style.display = 'none';
@@ -1313,11 +1453,13 @@ function commitPuzzleMove(mv) {
         return;
     }
 
+    moveSanHistory.push(ChessEngine.moveToSan(currentState, mv));
     currentState = ChessEngine.makeMove(currentState, mv);
     lastMove = { from: mv.from, to: mv.to };
     selectedSquare = null;
     recomputeLegalMoves();
     updateBoardDisplay();
+    renderMoveHistory();
     puzzleSolverIndex++;
 
     if (puzzleSolverIndex >= puzzleSolution.length) {
@@ -1347,10 +1489,12 @@ function playPuzzleOpponentReply() {
         return;
     }
 
+    moveSanHistory.push(ChessEngine.moveToSan(currentState, replyMove));
     currentState = ChessEngine.makeMove(currentState, replyMove);
     lastMove = { from: replyMove.from, to: replyMove.to };
     recomputeLegalMoves();
     updateBoardDisplay();
+    renderMoveHistory();
     puzzleSolverIndex++;
 
     if (puzzleSolverIndex >= puzzleSolution.length) {
@@ -1480,8 +1624,10 @@ function startReplay(states, moves, sanTokens, pgnText, returnScreen) {
     gameOver = false;
     selectedSquare = null;
     flipped = false;
+    moveSanHistory = replaySanTokens; /* the full game's notation, shown as a fixed reference alongside Prev/Next navigation */
     buildBoardTable();
     showReplayPosition();
+    renderMoveHistory();
     applyModeControlVisibility();
     document.getElementById('lichess-clock').style.display = 'none';
     document.getElementById('chess-clocks').style.display = 'none';
@@ -1603,10 +1749,12 @@ function beginWatchGame(gameId) {
     selectedSquare = null;
     flipped = false;
     lastMove = null;
+    moveSanHistory = [];
     currentState = ChessEngine.createInitialState();
     recomputeLegalMoves();
     buildBoardTable();
     updateBoardDisplay();
+    renderMoveHistory();
     applyModeControlVisibility();
     document.getElementById('lichess-clock').style.display = 'none';
     document.getElementById('chess-clocks').style.display = 'none';
@@ -1688,6 +1836,17 @@ function onWatchGameUpdate(err, data) {
             recomputeLegalMoves();
             updateBoardDisplay();
             applied = true;
+
+            /* Recomputed fresh from the full move list every tick (cheap -
+             * chess move generation is fast even for a long game) rather
+             * than tracked incrementally, since this whole position is
+             * already rebuilt from scratch each poll anyway. */
+            var sans = [];
+            for (var wi = 0; wi < replay.moves.length; wi++) {
+                sans.push(ChessEngine.moveToSan(replay.states[wi], replay.moves[wi]));
+            }
+            moveSanHistory = sans;
+            renderMoveHistory();
         }
     }
 
@@ -2073,6 +2232,7 @@ function undoMove() {
     var popCount = (mode === 'ai') ? 2 : 1;
     while (popCount > 0 && historyStack.length > 0) {
         currentState = historyStack.pop();
+        if (moveSanHistory.length > 0) { moveSanHistory.pop(); }
         popCount--;
     }
     selectedSquare = null;
@@ -2081,6 +2241,7 @@ function undoMove() {
     recountPositions();
     updateBoardDisplay();
     updateStatusText();
+    renderMoveHistory();
 }
 
 function flipBoard() {
@@ -2090,6 +2251,12 @@ function flipBoard() {
 }
 
 function init() {
+    enhancedMode = loadEnhancedModePref();
+    applyEnhancedModeClass();
+    updateEnhancedModeLabels();
+    document.getElementById('btn-enhanced-toggle').onclick = function () { toggleEnhancedMode(); };
+    document.getElementById('btn-enhanced-toggle-game').onclick = function () { toggleEnhancedMode(); };
+
     document.getElementById('btn-play-lichess').onclick = function () { goToLichessHome(); };
     document.getElementById('btn-local-rooms').onclick = function () { showScreen('local-rooms'); };
     document.getElementById('btn-local-rooms-back').onclick = function () { showScreen('splash'); };

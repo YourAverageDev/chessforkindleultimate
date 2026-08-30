@@ -116,6 +116,18 @@ vercel.json          Static hosting config with light caching headers for the as
 - The board is sized in JS from the device's actual viewport (not a fixed
   CSS size), so it fills the screen on whatever Kindle/tablet it's running
   on, and re-sizes on rotation.
+- **Move history** (standard algebraic notation, e.g. "1. e4 e5 2. Nf3")
+  and a **captured-pieces tray** are shown for every mode - local, online,
+  Lichess, puzzles, replay, and watching. Both are derived purely from
+  chess rules (`chessEngine.js`'s `moveToSan`/`computeCapturedPieces`),
+  not tracked as separate events, so they can't drift out of sync with
+  the board and needed no per-mode special-casing to add.
+- **Enhanced Mode** (a text link on the splash screen, and a button on the
+  game screen itself): an opt-in, remembered-per-device preference that
+  makes buttons and clocks bigger and easier to tap. Off by default so
+  the baseline experience is unchanged; it's pure CSS (font-size/padding
+  behind a body class), so turning it on doesn't cost anything on old
+  Kindle hardware either.
 
 ### Online play
 

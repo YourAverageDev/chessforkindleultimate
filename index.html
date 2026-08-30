@@ -28,6 +28,7 @@
             <a href="javascript:void(0)" class="big-btn" id="btn-local-rooms">Local Rooms</a>
         </div>
         <p class="hint">Tap a piece, then tap where it should go.</p>
+        <a href="javascript:void(0)" class="text-link" id="btn-enhanced-toggle">Enhanced Mode: Off</a>
     </div>
 </div>
 
@@ -440,9 +441,16 @@
 
     <div id="puzzle-info" style="display:none;"></div>
 
+    <div id="captured-row">
+        <span id="captured-by-black" class="captured-line"></span>
+        <span id="captured-by-white" class="captured-line"></span>
+    </div>
+
     <div id="board-wrap">
         <table id="board-table" cellspacing="0" cellpadding="0"></table>
     </div>
+
+    <div id="move-history" style="display:none;"></div>
 
     <div id="controls">
         <a href="javascript:void(0)" class="ctrl-btn" id="btn-new">New Game</a>
@@ -451,6 +459,7 @@
         <a href="javascript:void(0)" class="ctrl-btn" id="btn-draw" style="display:none;">Offer/Accept Draw</a>
         <a href="javascript:void(0)" class="ctrl-btn" id="btn-watch-stop" style="display:none;">Stop Watching</a>
         <a href="javascript:void(0)" class="ctrl-btn" id="btn-flip">Flip</a>
+        <a href="javascript:void(0)" class="ctrl-btn" id="btn-enhanced-toggle-game">Enhanced: Off</a>
         <a href="javascript:void(0)" class="ctrl-btn" id="btn-menu">Menu</a>
         <div id="replay-controls" style="display:none;">
             <a href="javascript:void(0)" class="ctrl-btn" id="btn-replay-first">|&laquo;</a>

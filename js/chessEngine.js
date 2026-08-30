@@ -621,6 +621,129 @@ var ChessEngine = (function () {
         return { states: states, moves: moves };
     }
 
+    /* The reverse of sanToMove - turns an already-legal move (as produced
+     * by generateLegalMoves, so .flag/.captured/.promotion are already
+     * correct) into standard algebraic notation, for the move-history
+     * panel. `state` must be the position BEFORE the move. */
+    function moveToSan(state, move) {
+        var next = makeMove(state, move);
+        var nextLegal = generateLegalMoves(next);
+        var inCheck = isKingInCheck(next, next.turn);
+        var suffix = inCheck ? (nextLegal.length === 0 ? '#' : '+') : '';
+
+        if (move.flag === 'castleK') { return 'O-O' + suffix; }
+        if (move.flag === 'castleQ') { return 'O-O-O' + suffix; }
+
+        var piece = state.board[move.from];
+        var isCapture = !!move.captured || move.flag === 'ep';
+        var destStr = squareToAlgebraic(move.to);
+
+        if (piece.type === 'p') {
+            var san = '';
+            if (isCapture) { san += String.fromCharCode(97 + (move.from % 8)) + 'x'; }
+            san += destStr;
+            if (move.promotion) { san += '=' + move.promotion.toUpperCase(); }
+            return san + suffix;
+        }
+
+        var pieceLetterMap = { n: 'N', b: 'B', r: 'R', q: 'Q', k: 'K' };
+        var out = pieceLetterMap[piece.type];
+
+        /* Disambiguation: only needed if another legal move of the same
+         * piece type also reaches this square - prefer file, then rank,
+         * then both, per standard SAN rules. */
+        var legal = generateLegalMoves(state);
+        var candidates = [];
+        for (var i = 0; i < legal.length; i++) {
+            var mv = legal[i];
+            if (mv.to !== move.to || mv.from === move.from) { continue; }
+            var otherPiece = state.board[mv.from];
+            if (otherPiece && otherPiece.type === piece.type) { candidates.push(mv); }
+        }
+        if (candidates.length > 0) {
+            var fromFile = String.fromCharCode(97 + (move.from % 8));
+            var fromRank = String(Math.floor(move.from / 8) + 1);
+            var sameFile = false, sameRank = false;
+            for (var j = 0; j < candidates.length; j++) {
+                if (String.fromCharCode(97 + (candidates[j].from % 8)) === fromFile) { sameFile = true; }
+                if (String(Math.floor(candidates[j].from / 8) + 1) === fromRank) { sameRank = true; }
+            }
+            if (!sameFile) { out += fromFile; }
+            else if (!sameRank) { out += fromRank; }
+            else { out += fromFile + fromRank; }
+        }
+
+        if (isCapture) { out += 'x'; }
+        out += destStr;
+        return out + suffix;
+    }
+
+    /* Turns a plain list of {from,to,promotion} moves (e.g. an online
+     * room's stored move list, or a Lichess game's decoded moves) into a
+     * list of SAN strings for a move-history panel, resolving each one
+     * against the actual legal moves at that point (same pattern
+     * api/_room.js's replay() already uses server-side) so flag/captured
+     * are correct for moveToSan. Returns null if any move can't be
+     * resolved (a corrupt/foreign move list). */
+    function movesToSanList(moveList) {
+        var state = createInitialState();
+        var sans = [];
+        for (var i = 0; i < moveList.length; i++) {
+            var wanted = moveList[i];
+            var legal = generateLegalMoves(state);
+            var resolved = null;
+            for (var j = 0; j < legal.length; j++) {
+                if (legal[j].from === wanted.from && legal[j].to === wanted.to && legal[j].promotion === (wanted.promotion || null)) {
+                    resolved = legal[j];
+                    break;
+                }
+            }
+            if (!resolved) { return null; }
+            sans.push(moveToSan(state, resolved));
+            state = makeMove(state, resolved);
+        }
+        return sans;
+    }
+
+    var STARTING_COUNTS = { p: 8, n: 2, b: 2, r: 2, q: 1 };
+
+    /* Captured-pieces tray data: counts what's missing from each side's
+     * starting set, by type, purely from the CURRENT board - not from
+     * tracking capture events - so it works identically for every mode
+     * (local, online, Lichess, watching) with no history needed at all.
+     * One accepted inaccuracy: a pawn promoted to, say, a queen looks
+     * identical to "a pawn was captured and a queen survived" from a pure
+     * piece count, so a promotion can under-count pawns / over-count the
+     * promoted piece type - a cosmetic edge case most simple captured-
+     * piece trays share, not worth the complexity of tracking real
+     * capture events across every mode's very different move-application
+     * paths to eliminate. */
+    function computeCapturedPieces(state) {
+        var counts = { w: { p: 0, n: 0, b: 0, r: 0, q: 0 }, b: { p: 0, n: 0, b: 0, r: 0, q: 0 } };
+        for (var i = 0; i < 64; i++) {
+            var piece = state.board[i];
+            if (piece && counts[piece.color] && counts[piece.color].hasOwnProperty(piece.type)) {
+                counts[piece.color][piece.type]++;
+            }
+        }
+        var captured = { w: [], b: [] };
+        var types = ['q', 'r', 'b', 'n', 'p'];
+        var colors = ['w', 'b'];
+        for (var c = 0; c < colors.length; c++) {
+            var color = colors[c];
+            for (var t = 0; t < types.length; t++) {
+                var type = types[t];
+                var missing = STARTING_COUNTS[type] - counts[color][type];
+                for (var k = 0; k < missing; k++) { captured[color].push(type); }
+            }
+        }
+        /* captured.w lists white PIECES that are gone (i.e. captured BY
+         * black), and vice versa - matches how captured-piece trays are
+         * conventionally shown (each side's tray shows what it captured
+         * FROM the opponent). */
+        return { capturedFromWhite: captured.w, capturedFromBlack: captured.b };
+    }
+
     var api = {
         createInitialState: createInitialState,
         generateLegalMoves: generateLegalMoves,
@@ -643,7 +766,10 @@ var ChessEngine = (function () {
         replayPgnToPly: replayPgnToPly,
         replayFullGame: replayFullGame,
         findMoveByUci: findMoveByUci,
-        replayUciMoves: replayUciMoves
+        replayUciMoves: replayUciMoves,
+        moveToSan: moveToSan,
+        movesToSanList: movesToSanList,
+        computeCapturedPieces: computeCapturedPieces
     };
 
     /* Also usable from Node (api/*.js serverless functions use this same
