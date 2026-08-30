@@ -91,6 +91,21 @@ var puzzleAutoPlaying = false;
 var puzzleRating = null;
 var puzzleThemes = [];
 
+/* Game Replay state (Lichess "My Games" and "Import PGN" both feed this).
+ * replayStates[i] is the position after replayMoves[i-1]/replaySanTokens[i-1]
+ * (replayStates[0] is the start position) - prev/next just changes
+ * replayIndex and re-renders from the precomputed array, no incremental
+ * move application needed. replayReturnScreen is which screen "Back to
+ * List" should return to, since replay can be entered from more than one
+ * place. */
+var lichessMyGames = [];
+var replayStates = [];
+var replayMoves = [];
+var replaySanTokens = [];
+var replayIndex = 0;
+var replayPgnText = '';
+var replayReturnScreen = 'splash';
+
 function setText(el, str) {
     if (el.textContent !== undefined) { el.textContent = str; }
     else { el.innerText = str; }
@@ -101,6 +116,7 @@ var ALL_SCREENS = [
     'online-menu', 'online-public', 'online-public-list', 'online-join', 'online-waiting',
     'lichess-login', 'lichess-menu', 'lichess-challenge', 'lichess-waiting', 'lichess-incoming',
     'puzzle-menu',
+    'lichess-my-games', 'lichess-import-pgn', 'lichess-game-pgn',
     'game'
 ];
 
@@ -296,6 +312,8 @@ function updateStatusText(status) {
         text = (currentState.turn === lichessColor ? 'Your move' : "Waiting for opponent's move") + checkSuffix;
     } else if (mode === 'puzzle' && !gameOver) {
         text = 'Find the best move for ' + turnName + checkSuffix;
+    } else if (mode === 'replay') {
+        text = 'Move ' + replayIndex + ' of ' + (replayStates.length - 1) + checkSuffix;
     } else if (status === 'check') {
         text = turnName + ' to move — Check!';
     } else {
@@ -397,6 +415,7 @@ function pickPromotion(pieceType) {
 
 function onSquareClick(idx) {
     if (gameOver) { return; }
+    if (mode === 'replay') { return; }
     if (mode === 'ai' && currentState.turn === aiColor) { return; }
     if (mode === 'online' && currentState.turn !== onlineColor) { return; }
     if (mode === 'lichess' && (currentState.turn !== lichessColor || lichessMoveInFlight)) { return; }
@@ -431,10 +450,12 @@ function applyModeControlVisibility() {
     var isOnline = (mode === 'online');
     var isLichess = (mode === 'lichess');
     var isPuzzle = (mode === 'puzzle');
-    document.getElementById('btn-new').style.display = (isOnline || isLichess || isPuzzle) ? 'none' : 'inline-block';
-    document.getElementById('btn-undo').style.display = (isOnline || isLichess || isPuzzle) ? 'none' : 'inline-block';
+    var isReplay = (mode === 'replay');
+    document.getElementById('btn-new').style.display = (isOnline || isLichess || isPuzzle || isReplay) ? 'none' : 'inline-block';
+    document.getElementById('btn-undo').style.display = (isOnline || isLichess || isPuzzle || isReplay) ? 'none' : 'inline-block';
     document.getElementById('btn-resign').style.display = isLichess ? 'inline-block' : 'none';
     document.getElementById('btn-draw').style.display = isLichess ? 'inline-block' : 'none';
+    document.getElementById('replay-controls').style.display = isReplay ? 'block' : 'none';
 }
 
 function startGame(selectedMode, level) {
@@ -1299,8 +1320,189 @@ function playPuzzleOpponentReply() {
     }
 }
 
+/* ---- my games / game replay / PGN ---- */
+
+function openLichessMyGames() {
+    setMessage('lichess-my-games-error', '');
+    document.getElementById('lichess-my-games-list').innerHTML = '';
+    document.getElementById('lichess-my-games-empty').style.display = 'none';
+    showScreen('lichess-my-games');
+    LichessClient.fetchMyGames(lichessSessionToken(), function (err, data) {
+        if (err || !data) { setMessage('lichess-my-games-error', formatLichessError(err)); return; }
+        lichessMyGames = data.games || [];
+        renderMyGamesList();
+    });
+}
+
+function resultLabel(g) {
+    if (g.result === 'win') { return 'Won'; }
+    if (g.result === 'loss') { return 'Lost'; }
+    if (g.result === 'draw') { return 'Draw'; }
+    if (g.result === 'ongoing') { return 'Ongoing'; }
+    return 'Game';
+}
+
+function renderMyGamesList() {
+    var container = document.getElementById('lichess-my-games-list');
+    var emptyMsg = document.getElementById('lichess-my-games-empty');
+    container.innerHTML = '';
+
+    if (lichessMyGames.length === 0) {
+        emptyMsg.style.display = 'block';
+        return;
+    }
+    emptyMsg.style.display = 'none';
+
+    for (var i = 0; i < lichessMyGames.length; i++) {
+        var g = lichessMyGames[i];
+        var oppName, oppRating;
+        if (g.myColor === 'w') { oppName = g.black.name; oppRating = g.black.rating; }
+        else if (g.myColor === 'b') { oppName = g.white.name; oppRating = g.white.rating; }
+        else { oppName = g.white.name + ' vs ' + g.black.name; oppRating = null; }
+
+        var item = document.createElement('div');
+        item.className = 'room-list-item';
+
+        var nameEl = document.createElement('div');
+        nameEl.className = 'room-list-code';
+        setText(nameEl, 'vs ' + oppName + (oppRating ? ' (' + oppRating + ')' : ''));
+        item.appendChild(nameEl);
+
+        var metaEl = document.createElement('div');
+        metaEl.className = 'room-list-meta';
+        var metaBits = [resultLabel(g)];
+        if (g.speed) { metaBits.push(g.speed); }
+        metaBits.push(g.rated ? 'Rated' : 'Casual');
+        if (g.opening && g.opening.name) { metaBits.push(g.opening.name); }
+        setText(metaEl, metaBits.join(' · '));
+        item.appendChild(metaEl);
+
+        var replayBtn = document.createElement('a');
+        replayBtn.href = 'javascript:void(0)';
+        replayBtn.className = 'room-list-join-btn';
+        setText(replayBtn, 'Replay');
+        replayBtn.setAttribute('onclick', 'openGameReplayFromLichess(\'' + g.id + '\')');
+        item.appendChild(replayBtn);
+
+        container.appendChild(item);
+    }
+}
+
+function openGameReplayFromLichess(gameId) {
+    var g = null;
+    for (var i = 0; i < lichessMyGames.length; i++) {
+        if (lichessMyGames[i].id === gameId) { g = lichessMyGames[i]; break; }
+    }
+    if (!g) { return; }
+
+    var replay = ChessEngine.replayFullGame(g.moves || '');
+    if (!replay) {
+        setMessage('lichess-my-games-error', "Could not read that game's moves.");
+        return;
+    }
+    startReplay(replay.states, replay.moves, replay.sanTokens, g.pgn, 'lichess-my-games');
+}
+
+function openImportPgnScreen() {
+    setMessage('lichess-import-error', '');
+    document.getElementById('import-pgn-input').value = '';
+    showScreen('lichess-import-pgn');
+}
+
+function loadImportedPgn() {
+    setMessage('lichess-import-error', '');
+    var text = document.getElementById('import-pgn-input').value;
+    if (!text || !text.replace(/^\s+|\s+$/g, '')) {
+        setMessage('lichess-import-error', 'Paste a PGN first.');
+        return;
+    }
+    var replay = ChessEngine.replayFullGame(text);
+    if (!replay || replay.states.length < 2) {
+        setMessage('lichess-import-error', "Couldn't read that PGN — check the format and try again.");
+        return;
+    }
+    startReplay(replay.states, replay.moves, replay.sanTokens, text, 'lichess-import-pgn');
+}
+
+/* Reused for both "My Games" (moves come pre-resolved from Lichess) and
+ * "Import PGN" (moves come from whatever the user pasted) - either way,
+ * by this point it's just a precomputed list of positions to step through,
+ * read-only. */
+function startReplay(states, moves, sanTokens, pgnText, returnScreen) {
+    mode = 'replay';
+    replayStates = states;
+    replayMoves = moves;
+    replaySanTokens = sanTokens || [];
+    replayPgnText = pgnText || '';
+    replayIndex = 0;
+    replayReturnScreen = returnScreen || 'splash';
+    gameOver = false;
+    selectedSquare = null;
+    flipped = false;
+    buildBoardTable();
+    showReplayPosition();
+    applyModeControlVisibility();
+    document.getElementById('lichess-clock').style.display = 'none';
+    document.getElementById('chess-clocks').style.display = 'none';
+    document.getElementById('puzzle-info').style.display = 'none';
+    showScreen('game');
+}
+
+function showReplayPosition() {
+    currentState = replayStates[replayIndex];
+    lastMove = (replayIndex > 0) ? { from: replayMoves[replayIndex - 1].from, to: replayMoves[replayIndex - 1].to } : null;
+    selectedSquare = null;
+    recomputeLegalMoves();
+    updateBoardDisplay();
+    updateStatusText();
+}
+
+function replayGoto(index) {
+    if (index < 0 || index >= replayStates.length) { return; }
+    replayIndex = index;
+    showReplayPosition();
+}
+
+function replayFirst() { replayGoto(0); }
+function replayPrev() { replayGoto(replayIndex - 1); }
+function replayNext() { replayGoto(replayIndex + 1); }
+function replayLast() { replayGoto(replayStates.length - 1); }
+
+/* Fallback for when a game has no ready-made PGN text (e.g. a Lichess
+ * "My Games" entry where the `pgn` field wasn't available) - builds a
+ * plain, numbered movetext string from the SAN tokens already used to
+ * replay it. */
+function reconstructPgnFromSan(sanTokens) {
+    var parts = [];
+    for (var i = 0; i < sanTokens.length; i++) {
+        if (i % 2 === 0) { parts.push((Math.floor(i / 2) + 1) + '.'); }
+        parts.push(sanTokens[i]);
+    }
+    return parts.join(' ');
+}
+
+function openPgnViewScreen() {
+    var text = (replayPgnText && replayPgnText.length) ? replayPgnText : reconstructPgnFromSan(replaySanTokens);
+    document.getElementById('pgn-text-display').value = text;
+    setMessage('pgn-copy-status', '');
+    showScreen('lichess-game-pgn');
+}
+
+/* execCommand('copy') is old and near-universally supported (including on
+ * ancient WebKit), but not guaranteed - .select() at least highlights the
+ * text either way, so the fallback message ("copy manually") is always
+ * actionable even where the automatic copy doesn't work. */
+function copyPgnText() {
+    var ta = document.getElementById('pgn-text-display');
+    ta.focus();
+    ta.select();
+    var ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+    setMessage('pgn-copy-status', ok ? 'Copied!' : 'Text selected — copy it manually.');
+}
+
 function undoMove() {
-    if (mode === 'online' || mode === 'lichess' || mode === 'puzzle') { return; }
+    if (mode === 'online' || mode === 'lichess' || mode === 'puzzle' || mode === 'replay') { return; }
     if (historyStack.length === 0) { return; }
     gameOver = false;
     hideOverlay('gameover-overlay');
@@ -1393,6 +1595,20 @@ function init() {
     document.getElementById('btn-lichess-logout').onclick = function () { logoutOfLichess(); };
     document.getElementById('btn-lichess-challenge').onclick = function () { openLichessChallengeScreen(); };
     document.getElementById('btn-lichess-incoming').onclick = function () { openLichessIncomingScreen(); };
+    document.getElementById('btn-lichess-my-games').onclick = function () { openLichessMyGames(); };
+    document.getElementById('btn-lichess-import-pgn').onclick = function () { openImportPgnScreen(); };
+    document.getElementById('btn-lichess-my-games-back').onclick = function () { showScreen('lichess-menu'); };
+    document.getElementById('btn-lichess-my-games-refresh').onclick = function () { openLichessMyGames(); };
+    document.getElementById('btn-import-pgn-back').onclick = function () { showScreen('lichess-menu'); };
+    document.getElementById('btn-import-pgn-load').onclick = function () { loadImportedPgn(); };
+    document.getElementById('btn-replay-first').onclick = function () { replayFirst(); };
+    document.getElementById('btn-replay-prev').onclick = function () { replayPrev(); };
+    document.getElementById('btn-replay-next').onclick = function () { replayNext(); };
+    document.getElementById('btn-replay-last').onclick = function () { replayLast(); };
+    document.getElementById('btn-replay-pgn').onclick = function () { openPgnViewScreen(); };
+    document.getElementById('btn-replay-back').onclick = function () { showScreen(replayReturnScreen); };
+    document.getElementById('btn-pgn-copy').onclick = function () { copyPgnText(); };
+    document.getElementById('btn-pgn-view-back').onclick = function () { showScreen('game'); };
     document.getElementById('btn-lichess-challenge-back').onclick = function () { showScreen('lichess-menu'); };
     document.getElementById('btn-lichess-incoming-back').onclick = function () { showScreen('lichess-menu'); };
     document.getElementById('btn-lichess-incoming-refresh').onclick = function () { refreshLichessIncomingList(); };

@@ -293,6 +293,10 @@ var LichessClient = (function () {
         request('GET', '/api/lichess/puzzle-next', null, null, callback);
     }
 
+    function fetchMyGames(sessionToken, callback) {
+        request('GET', '/api/lichess/my-games', sessionToken, null, callback);
+    }
+
     return {
         startLogin: startLogin,
         handleOAuthCallback: handleOAuthCallback,
@@ -309,6 +313,7 @@ var LichessClient = (function () {
         draw: draw,
         pollEvents: pollEvents,
         fetchDailyPuzzle: fetchDailyPuzzle,
-        fetchNextPuzzle: fetchNextPuzzle
+        fetchNextPuzzle: fetchNextPuzzle,
+        fetchMyGames: fetchMyGames
     };
 })();

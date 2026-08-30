@@ -65,6 +65,8 @@
         <div class="menu-buttons">
             <a href="javascript:void(0)" class="big-btn" id="btn-lichess-challenge">Challenge a Player</a>
             <a href="javascript:void(0)" class="big-btn" id="btn-lichess-incoming">Incoming Challenges<span id="lichess-incoming-badge"></span></a>
+            <a href="javascript:void(0)" class="big-btn" id="btn-lichess-my-games">My Games</a>
+            <a href="javascript:void(0)" class="big-btn" id="btn-lichess-import-pgn">Import PGN</a>
         </div>
         <p class="error-text" id="lichess-menu-error"></p>
         <a href="javascript:void(0)" class="text-link" id="btn-lichess-logout">Log Out</a>
@@ -136,6 +138,47 @@
         </div>
         <p class="error-text" id="lichess-incoming-error"></p>
         <a href="javascript:void(0)" class="text-link" id="btn-lichess-incoming-back">&laquo; Back</a>
+    </div>
+</div>
+
+<!-- LICHESS: MY GAMES -->
+<div id="lichess-my-games-screen" class="screen" style="display:none;">
+    <div class="splash-inner">
+        <h2>My Games</h2>
+        <div class="room-list" id="lichess-my-games-list"></div>
+        <p class="hint" id="lichess-my-games-empty" style="display:none;">No games found yet.</p>
+        <div class="menu-buttons">
+            <a href="javascript:void(0)" class="big-btn" id="btn-lichess-my-games-refresh">Refresh</a>
+        </div>
+        <p class="error-text" id="lichess-my-games-error"></p>
+        <a href="javascript:void(0)" class="text-link" id="btn-lichess-my-games-back">&laquo; Back</a>
+    </div>
+</div>
+
+<!-- LICHESS: IMPORT PGN -->
+<div id="lichess-import-pgn-screen" class="screen" style="display:none;">
+    <div class="splash-inner">
+        <h2>Import PGN</h2>
+        <p class="hint">Paste a PGN below to step through it on the board. Works without logging in.</p>
+        <textarea id="import-pgn-input" class="pgn-textarea" rows="8"></textarea>
+        <div class="menu-buttons">
+            <a href="javascript:void(0)" class="big-btn" id="btn-import-pgn-load">Load</a>
+        </div>
+        <p class="error-text" id="lichess-import-error"></p>
+        <a href="javascript:void(0)" class="text-link" id="btn-import-pgn-back">&laquo; Back</a>
+    </div>
+</div>
+
+<!-- GAME REPLAY: VIEW / COPY PGN -->
+<div id="lichess-game-pgn-screen" class="screen" style="display:none;">
+    <div class="splash-inner">
+        <h2>PGN</h2>
+        <textarea id="pgn-text-display" class="pgn-textarea" rows="10" readonly></textarea>
+        <div class="menu-buttons">
+            <a href="javascript:void(0)" class="big-btn" id="btn-pgn-copy">Copy</a>
+        </div>
+        <p class="hint" id="pgn-copy-status"></p>
+        <a href="javascript:void(0)" class="text-link" id="btn-pgn-view-back">&laquo; Back</a>
     </div>
 </div>
 
@@ -266,6 +309,14 @@
         <a href="javascript:void(0)" class="ctrl-btn" id="btn-draw" style="display:none;">Offer/Accept Draw</a>
         <a href="javascript:void(0)" class="ctrl-btn" id="btn-flip">Flip</a>
         <a href="javascript:void(0)" class="ctrl-btn" id="btn-menu">Menu</a>
+        <div id="replay-controls" style="display:none;">
+            <a href="javascript:void(0)" class="ctrl-btn" id="btn-replay-first">|&laquo;</a>
+            <a href="javascript:void(0)" class="ctrl-btn" id="btn-replay-prev">&laquo; Prev</a>
+            <a href="javascript:void(0)" class="ctrl-btn" id="btn-replay-next">Next &raquo;</a>
+            <a href="javascript:void(0)" class="ctrl-btn" id="btn-replay-last">&raquo;|</a>
+            <a href="javascript:void(0)" class="ctrl-btn" id="btn-replay-pgn">View PGN</a>
+            <a href="javascript:void(0)" class="ctrl-btn" id="btn-replay-back">Back to List</a>
+        </div>
     </div>
 </div>
 

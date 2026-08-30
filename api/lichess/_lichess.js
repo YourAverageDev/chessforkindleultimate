@@ -172,6 +172,30 @@ async function sampleEventStream(accessToken, path, maxMs) {
     return events;
 }
 
+/* Lichess's game-list export endpoints (/api/games/user/{username}) speak
+ * NDJSON (one JSON object per line), not a single JSON value - this reads
+ * the whole (finite, bounded-by-`max=`) response body and parses it line
+ * by line, unlike lichessFetch's single JSON.parse. Unlike the live event
+ * stream (sampleEventStream), this isn't open-ended, so no time-bounded
+ * sampling is needed - the response just ends once Lichess has sent the
+ * requested number of games. */
+async function lichessFetchNdjson(accessToken, path) {
+    var headers = { Accept: 'application/x-ndjson' };
+    if (accessToken) { headers.Authorization = 'Bearer ' + accessToken; }
+    var res = await fetch(LICHESS_BASE + path, { headers: headers });
+    var text = await res.text();
+    var lines = [];
+    if (res.ok) {
+        var rawLines = text.split('\n');
+        for (var i = 0; i < rawLines.length; i++) {
+            var line = rawLines[i].replace(/^\s+|\s+$/g, '');
+            if (!line) { continue; }
+            try { lines.push(JSON.parse(line)); } catch (e) { /* skip malformed line */ }
+        }
+    }
+    return { ok: res.ok, status: res.status, lines: lines };
+}
+
 async function readJsonBody(req) {
     if (req.body && typeof req.body === 'object') { return req.body; }
     if (typeof req.body === 'string' && req.body.length) {
@@ -212,6 +236,7 @@ module.exports = {
     randomSessionToken: randomSessionToken,
     exchangeCodeForToken: exchangeCodeForToken,
     lichessFetch: lichessFetch,
+    lichessFetchNdjson: lichessFetchNdjson,
     sampleEventStream: sampleEventStream,
     formEncode: formEncode,
     readJsonBody: readJsonBody,

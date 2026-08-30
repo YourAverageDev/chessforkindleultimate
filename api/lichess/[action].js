@@ -366,6 +366,68 @@ async function handlePuzzleNext(req, res) {
     return lichess.sendJson(res, 200, normalizePuzzleResponse(result.data));
 }
 
+/* "My Games" - the logged-in user's recent game history. Requests both
+ * `moves=true` (bare SAN movetext, e.g. "e4 e5 Nf3 ...") and
+ * `pgnInJson=true` (a fully formatted PGN with headers) per game, so the
+ * client can replay a game (using `moves`, via chessEngine's
+ * replayFullGame) and show/copy its PGN (using `pgn`) without a second
+ * request per game. As with the rest of this file, the exact field names
+ * below are this app's best-effort reading of Lichess's docs, not
+ * something checked against a real account or response. */
+async function handleMyGames(req, res) {
+    if (req.method !== 'GET') { return lichess.sendJson(res, 405, { error: 'method_not_allowed' }); }
+    var auth = await lichess.requireSession(req);
+    if (!auth) { return lichess.sendJson(res, 401, { error: 'not_logged_in' }); }
+
+    var username = auth.session.username || '';
+    var path = '/api/games/user/' + encodeURIComponent(username) + '?max=20&moves=true&opening=true&pgnInJson=true';
+    var result = await lichess.lichessFetchNdjson(auth.session.accessToken, path);
+    if (!result.ok) {
+        return lichess.sendJson(res, result.status || 502, { error: 'games_fetch_failed' });
+    }
+
+    var myUsernameLower = username.toLowerCase();
+    var games = [];
+    for (var i = 0; i < result.lines.length; i++) {
+        var g = result.lines[i];
+        var players = g.players || {};
+        var white = players.white || {};
+        var black = players.black || {};
+        var whiteName = (white.user && white.user.name) || (white.aiLevel ? ('Computer (level ' + white.aiLevel + ')') : 'Anonymous');
+        var blackName = (black.user && black.user.name) || (black.aiLevel ? ('Computer (level ' + black.aiLevel + ')') : 'Anonymous');
+
+        var myColor = null;
+        if (white.user && (white.user.name || '').toLowerCase() === myUsernameLower) { myColor = 'w'; }
+        else if (black.user && (black.user.name || '').toLowerCase() === myUsernameLower) { myColor = 'b'; }
+
+        var winnerColor = lichess.normalizeColor(g.winner);
+        var outcome;
+        if (!g.status || g.status === 'started' || g.status === 'created') { outcome = 'ongoing'; }
+        else if (!winnerColor) { outcome = 'draw'; }
+        else if (myColor && winnerColor === myColor) { outcome = 'win'; }
+        else if (myColor) { outcome = 'loss'; }
+        else { outcome = 'unknown'; }
+
+        games.push({
+            id: g.id,
+            rated: !!g.rated,
+            speed: g.speed || null,
+            perf: g.perf || null,
+            createdAt: g.createdAt || null,
+            status: g.status || null,
+            white: { name: whiteName, rating: (typeof white.rating === 'number') ? white.rating : null },
+            black: { name: blackName, rating: (typeof black.rating === 'number') ? black.rating : null },
+            myColor: myColor,
+            result: outcome,
+            opening: g.opening ? { eco: g.opening.eco, name: g.opening.name } : null,
+            moves: g.moves || '',
+            pgn: g.pgn || null
+        });
+    }
+
+    return lichess.sendJson(res, 200, { games: games });
+}
+
 var ACTIONS = {
     'oauth-exchange': handleOauthExchange,
     'me': handleMe,
@@ -379,7 +441,8 @@ var ACTIONS = {
     'draw': handleDraw,
     'poll-events': handlePollEvents,
     'puzzle-daily': handlePuzzleDaily,
-    'puzzle-next': handlePuzzleNext
+    'puzzle-next': handlePuzzleNext,
+    'my-games': handleMyGames
 };
 
 module.exports = async function handler(req, res) {
