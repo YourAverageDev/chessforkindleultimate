@@ -74,19 +74,24 @@ js/chessEngine.js    Pure rules engine: legal moves, check/mate/stalemate, castl
 js/ai.js             Iterative-deepening alpha-beta search used for "Play vs Computer"
 js/online.js         XHR client for the /api online-play routes (polling, no WebSockets)
 js/lichess.js        Lichess OAuth (PKCE, with a bundled pure-JS SHA-256) + Board API client
-js/ultimateChess.js  XHR client for Ultimate Chess Matchmaking (a separate Cloudflare Worker
-                     backend - see cf-worker/) - independent of both online.js and lichess.js
+js/ultimateChess.js  XHR client for Ultimate Chess Matchmaking ("Find Match" random-opponent
+                     play, via api/uc/*.js) - independent of both online.js and lichess.js
 js/app.js            UI controller: screens, board rendering, click handling, game flow
-cf-worker/           Ultimate Chess Matchmaking's own backend: a Cloudflare Worker + two
-                     Durable Objects (matchmaking queue, per-match game room). Deployed
-                     separately from the rest of this site - see cf-worker/README.md
-api/_room.js          Shared server-side helpers (Redis REST calls, room/token/replay logic)
+api/_redis.js         Shared Upstash Redis REST wrapper, used by both api/_room.js and api/uc/
+api/_room.js          Shared server-side helpers (room/token/replay logic) for room-code play
 api/create-room.js    POST - creates a room (optionally public), returns a code + player token
 api/join-room.js      POST - joins an existing room as the second player
 api/move.js           POST - validates and applies a move server-side (turn + legality checks)
 api/state.js          GET  - polled by both clients for the room's current move list/status
 api/cancel-room.js    POST - lets the creator delete a room that's still waiting for an opponent
 api/list-public-rooms.js  GET - lists open public rooms for the "Public Server Play" lobby
+api/uc/_uc.js             Shared helpers for Ultimate Chess Matchmaking (queue + game room logic)
+api/uc/queue/join.js      POST - joins the matchmaking queue, matches immediately if possible
+api/uc/queue/status.js    GET  - polled while waiting for a match
+api/uc/queue/cancel.js    POST - leaves the queue
+api/uc/game/state.js      GET  - polled by both clients for the match's current state
+api/uc/game/move.js       POST - validates and applies a move server-side
+api/uc/game/resign.js     POST - resigns a match
 api/lichess/_lichess.js          Shared helpers: OAuth token exchange, session storage, Lichess API proxy
 api/lichess/oauth-exchange.js    POST - completes login, returns our session token
 api/lichess/me.js                GET  - current Lichess username + ratings
@@ -173,27 +178,24 @@ when creating or joining a room.
 
 ## Ultimate Chess Matchmaking
 
-A second, **completely independent** real-time multiplayer system,
-separate from both Lichess play and this project's own Redis-backed
-online rooms above - no Lichess account, no dependency on either of those
-systems. "Find Match" automatically pairs you with another waiting
+A second matchmaking flow, separate from both Lichess play and this
+project's room-code online rooms above - no room code, no Lichess
+account. "Find Match" automatically pairs you with another waiting
 player and drops you into a dedicated game room with server-authoritative
 moves and chess clocks; matches Cancel Search too.
 
-The backend is a [Cloudflare Worker with two Durable
-Objects](cf-worker/) (one global matchmaking queue, one game room per
-match) instead of Vercel + Redis - Durable Objects process requests to
-themselves one at a time, which is what makes the matchmaking race-free
-by construction rather than needing the extra re-check logic a plain
-key-value queue does. It still talks to the browser over plain HTTP
-long-polling, same as everywhere else in this app - no WebSockets. See
-[`cf-worker/README.md`](cf-worker/README.md) for the full architecture
-notes, the API surface, and step-by-step deployment instructions
-(including how to test it entirely locally, no Cloudflare account
-needed, before deploying for real). **This backend needs to be deployed
-separately from the main site** - until `js/ultimateChess.js`'s
-`API_BASE` is pointed at a real deployment, this one feature won't work,
-though nothing else in the app is affected.
+It's the same Vercel + Redis backend as the room-code system
+(`api/uc/*.js`, using the same KV store set up above) rather than a
+separate deployment - no separate account, CLI, or deploy step needed.
+The waiting queue is one Redis LIST per time control: joining always
+tries an atomic `LPOP` first (Redis pops are indivisible, so two players
+hitting "Find Match" at the same moment can never both grab the same
+waiting opponent) before pushing itself as the new queue tail. Game state
+reuses the exact same move-list-replay approach as the room-code
+system - the same lazy "has this side's clock actually run out, checked
+against wall-clock time" logic, checked on every poll and before every
+move. It talks to the browser over plain HTTP long-polling, same as
+everywhere else in this app - no WebSockets.
 
 ## Lichess play
 

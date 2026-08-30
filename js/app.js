@@ -128,12 +128,11 @@ var replayReturnScreen = 'splash';
 var watchGameId = null;
 var watchPollFailCount = 0;
 
-/* Ultimate Chess Matchmaking state - a completely separate multiplayer
- * backend (Cloudflare Workers + Durable Objects, see cf-worker/ and
- * js/ultimateChess.js) from both the Lichess integration and this app's
- * own Redis-backed room system. No account, no Lichess - just a random
- * per-browser id (UltimateClient.getPlayerId()) and a dedicated game
- * room per match. */
+/* Ultimate Chess Matchmaking state - "Find Match" random-opponent play
+ * (see js/ultimateChess.js and api/uc/*.js), separate from both the
+ * Lichess integration and this app's own room-code play. No account, no
+ * Lichess - just a random per-browser id (UltimateClient.getPlayerId())
+ * and a dedicated game room per match. */
 var ucTicketId = null;
 var ucGameId = null;
 var ucColor = null;
@@ -2250,9 +2249,9 @@ function cancelSeekMatch() {
 }
 
 /* ---- Ultimate Chess Matchmaking ----
- * A completely separate multiplayer system (Cloudflare Workers + Durable
- * Objects, see cf-worker/ and js/ultimateChess.js) - no Lichess, no
- * account, its own dedicated game room per match. The client-side shape
+ * "Find Match" random-opponent play (see js/ultimateChess.js and
+ * api/uc/*.js) - no Lichess, no account, its own dedicated game room per
+ * match. The client-side shape
  * deliberately mirrors the Lichess/online-room patterns already proven
  * elsewhere in this file (optimistic local move + authoritative FEN
  * re-sync on poll, the shared clock-tick machinery originally written for

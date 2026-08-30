@@ -1,5 +1,0 @@
-# Local wrangler dev state/cache (wrangler dev --local) - never deploy-relevant
-.wrangler/
-
-# In case dependencies are ever added
-node_modules/

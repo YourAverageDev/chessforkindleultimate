@@ -1,41 +1,14 @@
 /* _room.js - shared helpers for the online-play API routes.
- * Storage: Upstash Redis via its plain REST API (no npm dependency at all -
- * just Node's built-in global fetch, available on Vercel's Node 18+
- * runtime). This works with either the "Vercel KV" quick-create flow
- * (env vars KV_REST_API_URL / KV_REST_API_TOKEN) or a directly-connected
- * Upstash Redis integration (UPSTASH_REDIS_REST_URL / _TOKEN) - whichever
- * one is present in the project's environment variables is used.
+ * Storage: Upstash Redis via api/_redis.js's plain REST wrapper - see that
+ * file for how credentials are picked up.
  */
 var ChessEngine = require('../js/chessEngine.js');
 var crypto = require('crypto');
+var redisCommand = require('./_redis.js').redisCommand;
 
 var ROOM_TTL_SECONDS = 6 * 60 * 60; /* abandoned/finished rooms expire after 6h */
 var CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; /* no 0/O/1/I - avoids ambiguity when read aloud/typed */
 var PUBLIC_TIME_CONTROL_MS = 10 * 60 * 1000; /* 10 minutes per side, Public Server Play only */
-
-function getCreds() {
-    var url = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
-    var token = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
-    if (!url || !token) {
-        throw new Error('No KV store configured. Add "Vercel KV" (or an Upstash Redis integration) to this project in the Vercel dashboard Storage tab.');
-    }
-    return { url: url, token: token };
-}
-
-async function redisCommand(commandArray) {
-    var creds = getCreds();
-    var res = await fetch(creds.url, {
-        method: 'POST',
-        headers: {
-            Authorization: 'Bearer ' + creds.token,
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(commandArray)
-    });
-    var data = await res.json();
-    if (data.error) { throw new Error('KV error: ' + data.error); }
-    return data.result;
-}
 
 function roomKey(code) { return 'chessroom:' + code; }
 

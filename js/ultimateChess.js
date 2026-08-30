@@ -1,9 +1,10 @@
-/* ultimateChess.js - client for "Ultimate Chess Matchmaking", a completely
- * separate multiplayer backend from the Lichess integration (js/lichess.js)
- * and from this app's own Redis-backed room system (js/online.js). This
- * one talks to a Cloudflare Worker + Durable Objects backend (see
- * cf-worker/) over plain HTTP long-polling - no WebSockets, no Lichess
- * account, no dependency on anything else in this app's backend.
+/* ultimateChess.js - client for "Ultimate Chess Matchmaking", the
+ * "Find Match" random-opponent flow. It's a separate matchmaking system
+ * from this app's own room-code play (js/online.js) and from the Lichess
+ * integration (js/lichess.js) - no room code, no Lichess account, just an
+ * automatic pairing with another waiting player - but it talks to the same
+ * Vercel + Redis backend as everything else in this app (api/uc/*.js),
+ * over the same plain HTTP long-polling.
  *
  * Plain XMLHttpRequest (not fetch), same as online.js and lichess.js, for
  * the same reason: guaranteed availability on old Kindle browsers that
@@ -11,13 +12,6 @@
  */
 var UltimateClient = (function () {
     "use strict";
-
-    /* Set this to your deployed Worker's URL after running through
-     * cf-worker/README.md (e.g. "https://ultimate-chess-matchmaking.
-     * YOUR-SUBDOMAIN.workers.dev", or your own custom domain/route if you
-     * set one up) - Ultimate Chess Matchmaking won't work until this
-     * points at a real deployment. */
-    var API_BASE = 'https://ultimate-chess-matchmaking.YOUR-SUBDOMAIN.workers.dev';
 
     var LS_PLAYER_ID = 'uc_player_id';
 
@@ -44,7 +38,7 @@ var UltimateClient = (function () {
 
     function request(method, path, body, callback) {
         var xhr = new XMLHttpRequest();
-        xhr.open(method, API_BASE + path, true);
+        xhr.open(method, path, true);
         if (body) { xhr.setRequestHeader('Content-Type', 'application/json'); }
         xhr.onreadystatechange = function () {
             if (xhr.readyState !== 4) { return; }
@@ -58,27 +52,27 @@ var UltimateClient = (function () {
     }
 
     function joinQueue(timeControlSec, incrementSec, callback) {
-        request('POST', '/uc/queue/join', { playerId: getPlayerId(), timeControlSec: timeControlSec, incrementSec: incrementSec }, callback);
+        request('POST', '/api/uc/queue/join', { playerId: getPlayerId(), timeControlSec: timeControlSec, incrementSec: incrementSec }, callback);
     }
 
     function pollQueue(ticketId, callback) {
-        request('GET', '/uc/queue/status?ticketId=' + encodeURIComponent(ticketId), null, callback);
+        request('GET', '/api/uc/queue/status?ticketId=' + encodeURIComponent(ticketId), null, callback);
     }
 
     function cancelQueue(ticketId, callback) {
-        request('POST', '/uc/queue/cancel', { ticketId: ticketId }, callback);
+        request('POST', '/api/uc/queue/cancel', { ticketId: ticketId }, callback);
     }
 
     function fetchGameState(gameId, callback) {
-        request('GET', '/uc/game/state?gameId=' + encodeURIComponent(gameId) + '&playerId=' + encodeURIComponent(getPlayerId()), null, callback);
+        request('GET', '/api/uc/game/state?gameId=' + encodeURIComponent(gameId) + '&playerId=' + encodeURIComponent(getPlayerId()), null, callback);
     }
 
     function sendMove(gameId, from, to, promotion, callback) {
-        request('POST', '/uc/game/move', { gameId: gameId, playerId: getPlayerId(), from: from, to: to, promotion: promotion || null }, callback);
+        request('POST', '/api/uc/game/move', { gameId: gameId, playerId: getPlayerId(), from: from, to: to, promotion: promotion || null }, callback);
     }
 
     function resign(gameId, callback) {
-        request('POST', '/uc/game/resign', { gameId: gameId, playerId: getPlayerId() }, callback);
+        request('POST', '/api/uc/game/resign', { gameId: gameId, playerId: getPlayerId() }, callback);
     }
 
     return {
