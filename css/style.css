@@ -30,6 +30,14 @@ html, body {
     margin: 0 auto;
 }
 
+#site-footer {
+    width: 100%;
+    padding: 10px 8px;
+    text-align: center;
+    font-size: 12px;
+    color: #888;
+}
+
 .title {
     font-size: 28px;
     margin: 12px 0 4px 0;
