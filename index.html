@@ -92,7 +92,8 @@
         <h2>Play Lichess</h2>
         <p class="hint" id="lichess-me-text">Logged in</p>
         <div class="menu-buttons">
-            <a href="javascript:void(0)" class="big-btn" id="btn-lichess-find-match">Find Match</a>
+            <a href="javascript:void(0)" class="big-btn" id="btn-lichess-find-match-lichess">Find Match with Lichess Players (Recommended)</a>
+            <a href="javascript:void(0)" class="big-btn" id="btn-lichess-find-match">Find Match (This Site)</a>
             <a href="javascript:void(0)" class="big-btn" id="btn-lichess-challenge">Challenge a Player</a>
             <a href="javascript:void(0)" class="big-btn" id="btn-lichess-incoming">Incoming Challenges<span id="lichess-incoming-badge"></span></a>
             <a href="javascript:void(0)" class="big-btn" id="btn-lichess-my-games">My Games</a>
@@ -149,11 +150,11 @@
     </div>
 </div>
 
-<!-- LICHESS: FIND MATCH -->
+<!-- LICHESS: FIND MATCH (THIS SITE) -->
 <div id="lichess-find-match-screen" class="screen" style="display:none;">
     <div class="splash-inner">
-        <h2>Find Match</h2>
-        <p class="hint">Matches you with another player using this app and starts a real Lichess game between you.</p>
+        <h2>Find Match (This Site)</h2>
+        <p class="hint">Matches you with another player using this app and starts a real Lichess game between you. Only works if someone else using this app is searching too.</p>
 
         <p class="hint">Time control</p>
         <select id="lichess-findmatch-timecontrol-select" class="tc-select">
@@ -178,13 +179,52 @@
     </div>
 </div>
 
-<!-- LICHESS: SEARCHING FOR A MATCH -->
+<!-- LICHESS: SEARCHING FOR A MATCH (THIS SITE) -->
 <div id="lichess-matching-screen" class="screen" style="display:none;">
     <div class="splash-inner">
         <h2>Searching&hellip;</h2>
         <p class="hint">Looking for another player. This can take a while if nobody else is searching right now.</p>
         <p class="error-text" id="matching-error"></p>
         <a href="javascript:void(0)" class="text-link" id="btn-matching-cancel">&laquo; Cancel Search</a>
+    </div>
+</div>
+
+<!-- LICHESS: FIND MATCH WITH LICHESS PLAYERS (real Lichess seek) -->
+<div id="lichess-find-match-lichess-screen" class="screen" style="display:none;">
+    <div class="splash-inner">
+        <h2>Find Match with Lichess Players</h2>
+        <p class="hint">Uses Lichess's own matchmaking to find you a real opponent from all of Lichess, not just this app.</p>
+
+        <p class="hint">Time control</p>
+        <select id="lichess-seek-timecontrol-select" class="tc-select">
+            <option value="1,0">Bullet &middot; 1+0</option>
+            <option value="3,0">Blitz &middot; 3+0</option>
+            <option value="5,0" selected>Blitz &middot; 5+0</option>
+            <option value="10,0">Rapid &middot; 10+0</option>
+            <option value="15,10">Rapid &middot; 15+10</option>
+        </select>
+
+        <p class="hint">Game type</p>
+        <div class="menu-buttons tri-buttons">
+            <a href="javascript:void(0)" class="big-btn small-btn choice-btn" id="btn-seek-rated-casual">Casual</a>
+            <a href="javascript:void(0)" class="big-btn small-btn choice-btn" id="btn-seek-rated-rated">Rated</a>
+        </div>
+
+        <div class="menu-buttons">
+            <a href="javascript:void(0)" class="big-btn" id="btn-seek-submit">Find Match</a>
+        </div>
+        <p class="error-text" id="seek-error"></p>
+        <a href="javascript:void(0)" class="text-link" id="btn-seek-back">&laquo; Back</a>
+    </div>
+</div>
+
+<!-- LICHESS: SEARCHING FOR A MATCH (Lichess seek) -->
+<div id="lichess-matching-lichess-screen" class="screen" style="display:none;">
+    <div class="splash-inner">
+        <h2>Searching Lichess&hellip;</h2>
+        <p class="hint">Looking for a real Lichess opponent. This can take a little while depending on the time control.</p>
+        <p class="error-text" id="matching-lichess-error"></p>
+        <a href="javascript:void(0)" class="text-link" id="btn-matching-lichess-cancel">&laquo; Cancel Search</a>
     </div>
 </div>
 

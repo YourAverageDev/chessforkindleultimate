@@ -758,6 +758,103 @@ async function handleFindMatchCancel(req, res) {
     return lichess.sendJson(res, 200, { ok: true });
 }
 
+/* ---- Find Match with Lichess Players (real Lichess seek) ----
+ * See _lichess.js's "Find Match with Lichess Players" section for the
+ * architecture and its one real limitation (a bounded-window
+ * approximation of an API that wants a single held-open connection).
+ * SEEK_WINDOW_MS deliberately leaves headroom under a typical serverless
+ * function's execution-time limit for the two /api/account/playing calls
+ * around it (unlike poll-events's SAMPLE_MS, which has no such calls to
+ * budget for). */
+var SEEK_WINDOW_MS = 6000;
+
+async function findNewGame(accessToken, existingGameIds) {
+    var playing = await lichess.lichessFetch(accessToken, '/api/account/playing');
+    if (!playing.ok) { return null; }
+    var games = (playing.data && playing.data.nowPlaying) || [];
+    for (var i = 0; i < games.length; i++) {
+        if (existingGameIds.indexOf(games[i].gameId) === -1) {
+            return { gameId: games[i].gameId, color: lichess.normalizeColor(games[i].color) };
+        }
+    }
+    return null;
+}
+
+async function performSeekCycle(accessToken, seekRecord) {
+    var found = await findNewGame(accessToken, seekRecord.existingGameIds);
+    if (found) { return { matched: true, gameId: found.gameId, color: found.color }; }
+
+    await lichess.openBoundedSeek(accessToken, seekRecord.params, SEEK_WINDOW_MS);
+
+    var found2 = await findNewGame(accessToken, seekRecord.existingGameIds);
+    if (found2) { return { matched: true, gameId: found2.gameId, color: found2.color }; }
+    return { matched: false };
+}
+
+async function handleSeekStart(req, res) {
+    if (req.method !== 'POST') { return lichess.sendJson(res, 405, { error: 'method_not_allowed' }); }
+    var auth = await lichess.requireSession(req);
+    if (!auth) { return lichess.sendJson(res, 401, { error: 'not_logged_in' }); }
+
+    var body = await lichess.readJsonBody(req);
+    var timeMinutes = parseInt(body.timeMinutes, 10);
+    var incrementSec = parseInt(body.incrementSec, 10);
+    var rated = !!body.rated;
+    if (isNaN(timeMinutes) || isNaN(incrementSec)) { return lichess.sendJson(res, 400, { error: 'bad_request' }); }
+
+    var playingBefore = await lichess.lichessFetch(auth.session.accessToken, '/api/account/playing');
+    var existingGameIds = [];
+    if (playingBefore.ok) {
+        var games = (playingBefore.data && playingBefore.data.nowPlaying) || [];
+        for (var i = 0; i < games.length; i++) { existingGameIds.push(games[i].gameId); }
+    }
+
+    var seekId = lichess.randomTicketId();
+    var seekRecord = {
+        sessionToken: auth.token,
+        existingGameIds: existingGameIds,
+        params: { timeMinutes: timeMinutes, incrementSec: incrementSec, rated: rated },
+        startedAt: Date.now()
+    };
+    await lichess.saveSeekSession(seekId, seekRecord);
+
+    var result = await performSeekCycle(auth.session.accessToken, seekRecord);
+    return lichess.sendJson(res, 200, { seekId: seekId, matched: result.matched, gameId: result.gameId || null, color: result.color || null });
+}
+
+async function handleSeekPoll(req, res) {
+    if (req.method !== 'GET') { return lichess.sendJson(res, 405, { error: 'method_not_allowed' }); }
+    var auth = await lichess.requireSession(req);
+    if (!auth) { return lichess.sendJson(res, 401, { error: 'not_logged_in' }); }
+
+    var seekId = (req.query && req.query.seekId || '').toString();
+    if (!seekId) { return lichess.sendJson(res, 400, { error: 'missing_seek_id' }); }
+
+    var seekRecord = await lichess.getSeekSession(seekId);
+    if (!seekRecord) { return lichess.sendJson(res, 200, { found: false }); }
+
+    var result = await performSeekCycle(auth.session.accessToken, seekRecord);
+    return lichess.sendJson(res, 200, { found: true, matched: result.matched, gameId: result.gameId || null, color: result.color || null });
+}
+
+async function handleSeekCancel(req, res) {
+    if (req.method !== 'POST') { return lichess.sendJson(res, 405, { error: 'method_not_allowed' }); }
+    var auth = await lichess.requireSession(req);
+    if (!auth) { return lichess.sendJson(res, 401, { error: 'not_logged_in' }); }
+
+    var body = await lichess.readJsonBody(req);
+    var seekId = (body.seekId || '').toString();
+    if (!seekId) { return lichess.sendJson(res, 400, { error: 'missing_seek_id' }); }
+
+    /* No live seek connection to explicitly abort here - each window is
+     * already bounded and self-closing (see openBoundedSeek). Cancelling
+     * just means "stop polling and forget this search," which deleting
+     * the session record accomplishes: the next poll (if one somehow still
+     * arrived) would find nothing and report found:false. */
+    await lichess.deleteSeekSession(seekId);
+    return lichess.sendJson(res, 200, { ok: true });
+}
+
 var ACTIONS = {
     'oauth-exchange': handleOauthExchange,
     'me': handleMe,
@@ -782,7 +879,10 @@ var ACTIONS = {
     'pairing-link': handlePairingLink,
     'find-match-start': handleFindMatchStart,
     'find-match-poll': handleFindMatchPoll,
-    'find-match-cancel': handleFindMatchCancel
+    'find-match-cancel': handleFindMatchCancel,
+    'seek-start': handleSeekStart,
+    'seek-poll': handleSeekPoll,
+    'seek-cancel': handleSeekCancel
 };
 
 module.exports = async function handler(req, res) {

@@ -335,6 +335,23 @@ var LichessClient = (function () {
         request('POST', '/api/lichess/find-match-cancel', sessionToken, { ticketId: ticketId }, callback);
     }
 
+    /* ---- Find Match with Lichess Players (real Lichess seek) ----
+     * Each call here can take several seconds server-side (it holds a real
+     * Lichess seek connection open for a bounded window before replying) -
+     * that's expected, not a slow/broken request; the plain XHR wrapper
+     * below has no timeout of its own, so it just waits. */
+    function seekStart(sessionToken, opts, callback) {
+        request('POST', '/api/lichess/seek-start', sessionToken, opts, callback);
+    }
+
+    function seekPoll(sessionToken, seekId, callback) {
+        request('GET', '/api/lichess/seek-poll?seekId=' + encodeURIComponent(seekId), sessionToken, null, callback);
+    }
+
+    function seekCancel(sessionToken, seekId, callback) {
+        request('POST', '/api/lichess/seek-cancel', sessionToken, { seekId: seekId }, callback);
+    }
+
     /* Watch Games (TV) and Position Analysis are both public - no session
      * needed, same as the puzzle endpoints. */
     function fetchTvChannels(callback) {
@@ -378,6 +395,9 @@ var LichessClient = (function () {
         findMatchStart: findMatchStart,
         findMatchPoll: findMatchPoll,
         findMatchCancel: findMatchCancel,
+        seekStart: seekStart,
+        seekPoll: seekPoll,
+        seekCancel: seekCancel,
         fetchTvChannels: fetchTvChannels,
         fetchWatchGame: fetchWatchGame,
         fetchExplorer: fetchExplorer,

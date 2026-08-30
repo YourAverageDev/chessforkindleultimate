@@ -121,6 +121,13 @@ var lichessPairingCode = null;
 var lichessFindMatchTicketId = null;
 var matchSelectedRated = false;
 
+/* Find Match with Lichess Players state (real Lichess seek - see
+ * api/lichess/_lichess.js's openBoundedSeek). seekSelectedRated mirrors
+ * matchSelectedRated's role for the This-Site screen, kept separate for
+ * the same reason. */
+var lichessSeekId = null;
+var seekSelectedRated = false;
+
 function setText(el, str) {
     if (el.textContent !== undefined) { el.textContent = str; }
     else { el.innerText = str; }
@@ -134,6 +141,7 @@ var ALL_SCREENS = [
     'lichess-my-games', 'lichess-import-pgn', 'lichess-game-pgn',
     'tv-list', 'lichess-profile', 'lichess-analysis',
     'lichess-pairing', 'lichess-link-device', 'lichess-find-match', 'lichess-matching',
+    'lichess-find-match-lichess', 'lichess-matching-lichess',
     'game'
 ];
 
@@ -1904,6 +1912,80 @@ function cancelFindMatch() {
     showScreen('lichess-menu');
 }
 
+/* ---- Find Match with Lichess Players (real Lichess seek) ---- */
+
+function openLichessSeekScreen() {
+    setMessage('seek-error', '');
+    seekSelectedRated = false;
+    updateSeekChoiceButtons();
+    showScreen('lichess-find-match-lichess');
+}
+
+function updateSeekChoiceButtons() {
+    var casualBtn = document.getElementById('btn-seek-rated-casual');
+    var ratedBtn = document.getElementById('btn-seek-rated-rated');
+    casualBtn.className = 'big-btn small-btn choice-btn' + (!seekSelectedRated ? ' selected' : '');
+    ratedBtn.className = 'big-btn small-btn choice-btn' + (seekSelectedRated ? ' selected' : '');
+}
+
+/* Each seekStart/seekPoll call can take several seconds (the server holds
+ * a real Lichess seek connection open for a bounded window before
+ * replying - see api/lichess/_lichess.js's openBoundedSeek) - the small
+ * 300ms interval below is mostly there to yield between calls, not to
+ * pace them; the server-side hold is what actually paces the search. */
+function startSeekMatch() {
+    setMessage('seek-error', '');
+    var tc = document.getElementById('lichess-seek-timecontrol-select').value.split(',');
+    var timeMinutes = parseInt(tc[0], 10);
+    var incrementSec = parseInt(tc[1], 10);
+
+    LichessClient.seekStart(lichessSessionToken(), {
+        timeMinutes: timeMinutes,
+        incrementSec: incrementSec,
+        rated: seekSelectedRated
+    }, function (err, data) {
+        if (err || !data) { setMessage('seek-error', formatLichessError(err)); return; }
+        lichessSeekId = data.seekId;
+        setMessage('matching-lichess-error', '');
+        showScreen('lichess-matching-lichess');
+        if (data.matched && data.gameId) { onFoundSeekMatch(data.gameId, data.color); return; }
+        OnlineClient.startPolling(function (cb) {
+            LichessClient.seekPoll(lichessSessionToken(), lichessSeekId, cb);
+        }, 300, onSeekPollUpdate);
+    });
+}
+
+function onSeekPollUpdate(err, data) {
+    if (err || !data) { setMessage('matching-lichess-error', formatLichessError(err)); return; }
+    setMessage('matching-lichess-error', '');
+    if (data.matched && data.gameId) {
+        OnlineClient.stopPolling();
+        onFoundSeekMatch(data.gameId, data.color);
+    }
+}
+
+function onFoundSeekMatch(gameId, color) {
+    if (color) { beginLichessGame(gameId, color); return; }
+    /* Fallback in case color ever comes back empty - reuses the exact same
+     * lookup the "This Site" and manual-challenge flows already do. */
+    LichessClient.fetchGameState(lichessSessionToken(), gameId, function (err, data) {
+        if (!err && data && data.active) { beginLichessGame(gameId, data.color); }
+        else {
+            setMessage('matching-lichess-error', 'Match found but the game could not be loaded. Please try again.');
+            showScreen('lichess-menu');
+        }
+    });
+}
+
+function cancelSeekMatch() {
+    OnlineClient.stopPolling();
+    if (lichessSeekId) {
+        LichessClient.seekCancel(lichessSessionToken(), lichessSeekId, function () { /* best-effort - screen is already leaving either way */ });
+    }
+    lichessSeekId = null;
+    showScreen('lichess-menu');
+}
+
 function undoMove() {
     if (mode === 'online' || mode === 'lichess' || mode === 'puzzle' || mode === 'replay' || mode === 'watch') { return; }
     if (historyStack.length === 0) { return; }
@@ -2008,6 +2090,12 @@ function init() {
     document.getElementById('btn-matching-cancel').onclick = function () { cancelFindMatch(); };
     document.getElementById('btn-match-rated-casual').onclick = function () { matchSelectedRated = false; updateMatchChoiceButtons(); };
     document.getElementById('btn-match-rated-rated').onclick = function () { matchSelectedRated = true; updateMatchChoiceButtons(); };
+    document.getElementById('btn-lichess-find-match-lichess').onclick = function () { openLichessSeekScreen(); };
+    document.getElementById('btn-seek-back').onclick = function () { showScreen('lichess-menu'); };
+    document.getElementById('btn-seek-submit').onclick = function () { startSeekMatch(); };
+    document.getElementById('btn-matching-lichess-cancel').onclick = function () { cancelSeekMatch(); };
+    document.getElementById('btn-seek-rated-casual').onclick = function () { seekSelectedRated = false; updateSeekChoiceButtons(); };
+    document.getElementById('btn-seek-rated-rated').onclick = function () { seekSelectedRated = true; updateSeekChoiceButtons(); };
     document.getElementById('btn-lichess-menu-back').onclick = function () { showScreen('splash'); };
     document.getElementById('btn-lichess-logout').onclick = function () { logoutOfLichess(); };
     document.getElementById('btn-lichess-challenge').onclick = function () { openLichessChallengeScreen(); };

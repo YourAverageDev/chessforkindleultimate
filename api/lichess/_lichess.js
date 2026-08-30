@@ -162,6 +162,81 @@ async function listMatchQueueIds() {
     return ids || [];
 }
 
+/* ---- Find Match with Lichess Players (real Lichess seek) ----
+ * Unlike the "This Site" queue above, this does NOT match two of this
+ * app's own users - it uses Lichess's own matchmaking (POST
+ * /api/board/seek) against Lichess's whole player pool. That endpoint's
+ * one real complication: the HTTP request has to stay open for as long as
+ * you're searching (closing it is how you cancel), which fits neither a
+ * Vercel serverless function's execution-time limit nor this app's
+ * polling-only client. openBoundedSeek approximates it the same way
+ * sampleEventStream already approximates Lichess's other long-lived
+ * streams elsewhere in this file: hold a real seek connection open for a
+ * bounded window, then let it close. A seek session record here is just
+ * per-user bookkeeping (which of the user's OWN games already existed
+ * before they started searching, so a freshly-appeared one can be told
+ * apart from an unrelated pre-existing game) - not a matchmaking pool. */
+var SEEK_SESSION_TTL_SECONDS = 10 * 60;
+
+function seekSessionKey(id) { return 'lichessseek:' + id; }
+
+async function saveSeekSession(id, session) {
+    await redisCommand(['SET', seekSessionKey(id), JSON.stringify(session), 'EX', SEEK_SESSION_TTL_SECONDS]);
+}
+
+async function getSeekSession(id) {
+    var raw = await redisCommand(['GET', seekSessionKey(id)]);
+    return raw ? JSON.parse(raw) : null;
+}
+
+async function deleteSeekSession(id) {
+    await redisCommand(['DEL', seekSessionKey(id)]);
+}
+
+/* Holds a real POST /api/board/seek connection open for maxMs, then lets
+ * it close - this is what actually places the user in Lichess's live seek
+ * pool for that window, not just a documentation exercise. The stream's
+ * own body (keep-alive pings) isn't documented to carry match info, so
+ * it's read and discarded here purely to keep the underlying connection
+ * alive; the caller detects an actual match separately via
+ * /api/account/playing (see [action].js's findNewGame), which is the same
+ * plain-GET primitive already used elsewhere in this integration rather
+ * than something new and unverified. */
+async function openBoundedSeek(accessToken, params, maxMs) {
+    var controller = new AbortController();
+    var timer = setTimeout(function () { controller.abort(); }, maxMs);
+    try {
+        var res = await fetch(LICHESS_BASE + '/api/board/seek', {
+            method: 'POST',
+            headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: formEncode({
+                rated: params.rated,
+                time: params.timeMinutes,
+                increment: params.incrementSec,
+                variant: 'standard'
+            }),
+            signal: controller.signal
+        });
+        if (res.body && res.body.getReader) {
+            var reader = res.body.getReader();
+            for (;;) {
+                var chunk = await reader.read();
+                if (chunk.done) { break; }
+            }
+        } else {
+            await res.text(); /* fallback if this runtime lacks a streaming body reader - still bounded by the same abort */
+        }
+    } catch (e) {
+        /* Abort-on-timeout is the expected, common exit here, exactly like
+         * sampleEventStream - not a real failure. A genuine request error
+         * (bad params, expired token) also lands here; the caller's
+         * account/playing check simply keeps coming back "not matched" in
+         * that case rather than throwing. */
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
 /* Lichess speaks full-word colors ("white"/"black"); this app's own chess
  * engine and every other mode (2 Player, vs Computer, our own online
  * rooms) use single-char 'w'/'b' throughout - normalize at this boundary
@@ -361,5 +436,9 @@ module.exports = {
     deleteMatchTicket: deleteMatchTicket,
     addToMatchQueue: addToMatchQueue,
     removeFromMatchQueue: removeFromMatchQueue,
-    listMatchQueueIds: listMatchQueueIds
+    listMatchQueueIds: listMatchQueueIds,
+    saveSeekSession: saveSeekSession,
+    getSeekSession: getSeekSession,
+    deleteSeekSession: deleteSeekSession,
+    openBoundedSeek: openBoundedSeek
 };
