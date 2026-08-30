@@ -1584,6 +1584,19 @@ function renderTvChannelList(channels) {
         setText(metaEl, c.name + (c.rating ? ' (' + c.rating + ')' : ''));
         item.appendChild(metaEl);
 
+        /* TEMPORARY DEBUG: shows Lichess's raw per-channel data so the
+         * true field name for the current game id can be read directly
+         * off this screen - remove once handleTvChannels's `gameId`
+         * assumption is confirmed correct or fixed. */
+        if (c.raw) {
+            var debugEl = document.createElement('div');
+            debugEl.className = 'room-list-meta';
+            debugEl.style.wordBreak = 'break-all';
+            debugEl.style.fontSize = '10px';
+            setText(debugEl, c.raw);
+            item.appendChild(debugEl);
+        }
+
         var watchBtn = document.createElement('a');
         watchBtn.href = 'javascript:void(0)';
         watchBtn.className = 'room-list-join-btn';

@@ -464,12 +464,21 @@ async function handleTvChannels(req, res) {
     for (var key in data) {
         if (!data.hasOwnProperty(key)) { continue; }
         var c = data[key];
-        if (!c || !c.gameId) { continue; }
+        if (!c) { continue; }
+        /* DEBUG: the assumed `gameId` field has been producing an id that
+         * 404s (as an HTML page, meaning it never even reached Lichess's
+         * API layer as a recognizable id) when used against
+         * /api/game/export/{id}. Rather than guess at another field name
+         * blind, every channel's ENTIRE raw object is included here
+         * (`raw`) so the true field names can be read directly off the
+         * Watch Games screen and reported back - no Vercel log access
+         * needed. Remove `raw` once the real field name is confirmed. */
         channels.push({
             channel: key,
             name: (c.user && c.user.name) || 'Unknown',
             rating: (typeof c.rating === 'number') ? c.rating : null,
-            gameId: c.gameId
+            gameId: c.gameId || null,
+            raw: JSON.stringify(c)
         });
     }
     return lichess.sendJson(res, 200, { channels: channels });
