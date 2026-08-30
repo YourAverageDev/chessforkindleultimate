@@ -128,6 +128,17 @@ var replayReturnScreen = 'splash';
 var watchGameId = null;
 var watchPollFailCount = 0;
 
+/* Ultimate Chess Matchmaking state - a completely separate multiplayer
+ * backend (Cloudflare Workers + Durable Objects, see cf-worker/ and
+ * js/ultimateChess.js) from both the Lichess integration and this app's
+ * own Redis-backed room system. No account, no Lichess - just a random
+ * per-browser id (UltimateClient.getPlayerId()) and a dedicated game
+ * room per match. */
+var ucTicketId = null;
+var ucGameId = null;
+var ucColor = null;
+var ucMoveInFlight = false;
+
 /* Kindle pairing state (this device's own pairing code, while displayed
  * and waiting to be linked from another device). */
 var lichessPairingCode = null;
@@ -240,6 +251,7 @@ var ALL_SCREENS = [
     'tv-list', 'lichess-profile', 'lichess-analysis',
     'lichess-pairing', 'lichess-link-device', 'lichess-find-match', 'lichess-matching',
     'lichess-find-match-lichess', 'lichess-matching-lichess',
+    'ultimate-menu', 'ultimate-matching',
     'game'
 ];
 
@@ -439,6 +451,8 @@ function updateStatusText(status) {
         text = (currentState.turn === onlineColor ? 'Your move' : "Waiting for opponent's move") + checkSuffix;
     } else if (mode === 'lichess' && !gameOver) {
         text = (currentState.turn === lichessColor ? 'Your move' : "Waiting for opponent's move") + checkSuffix;
+    } else if (mode === 'ultimate' && !gameOver) {
+        text = (currentState.turn === ucColor ? 'Your move' : "Waiting for opponent's move") + checkSuffix;
     } else if (mode === 'puzzle' && !gameOver) {
         text = 'Find the best move for ' + turnName + checkSuffix;
     } else if (mode === 'replay') {
@@ -543,6 +557,7 @@ function pickPromotion(pieceType) {
     if (mode === 'online') { commitOnlineMove(chosen); }
     else if (mode === 'lichess') { commitLichessMove(chosen); }
     else if (mode === 'puzzle') { commitPuzzleMove(chosen); }
+    else if (mode === 'ultimate') { commitUltimateMove(chosen); }
     else { commitMove(chosen); }
 }
 
@@ -553,6 +568,7 @@ function onSquareClick(idx) {
     if (mode === 'online' && currentState.turn !== onlineColor) { return; }
     if (mode === 'lichess' && (currentState.turn !== lichessColor || lichessMoveInFlight)) { return; }
     if (mode === 'puzzle' && (currentState.turn !== puzzleColor || puzzleAutoPlaying)) { return; }
+    if (mode === 'ultimate' && (currentState.turn !== ucColor || ucMoveInFlight)) { return; }
 
     var piece = currentState.board[idx];
 
@@ -566,6 +582,7 @@ function onSquareClick(idx) {
             if (mode === 'online') { commitOnlineMove(matches[0]); }
             else if (mode === 'lichess') { commitLichessMove(matches[0]); }
             else if (mode === 'puzzle') { commitPuzzleMove(matches[0]); }
+            else if (mode === 'ultimate') { commitUltimateMove(matches[0]); }
             else { commitMove(matches[0]); }
             return;
         }
@@ -585,12 +602,14 @@ function applyModeControlVisibility() {
     var isPuzzle = (mode === 'puzzle');
     var isReplay = (mode === 'replay');
     var isWatch = (mode === 'watch');
-    document.getElementById('btn-new').style.display = (isOnline || isLichess || isPuzzle || isReplay || isWatch) ? 'none' : 'inline-block';
-    document.getElementById('btn-undo').style.display = (isOnline || isLichess || isPuzzle || isReplay || isWatch) ? 'none' : 'inline-block';
+    var isUltimate = (mode === 'ultimate');
+    document.getElementById('btn-new').style.display = (isOnline || isLichess || isPuzzle || isReplay || isWatch || isUltimate) ? 'none' : 'inline-block';
+    document.getElementById('btn-undo').style.display = (isOnline || isLichess || isPuzzle || isReplay || isWatch || isUltimate) ? 'none' : 'inline-block';
     document.getElementById('btn-resign').style.display = isLichess ? 'inline-block' : 'none';
     document.getElementById('btn-draw').style.display = isLichess ? 'inline-block' : 'none';
     document.getElementById('replay-controls').style.display = isReplay ? 'block' : 'none';
     document.getElementById('btn-watch-stop').style.display = isWatch ? 'inline-block' : 'none';
+    document.getElementById('btn-ultimate-resign').style.display = isUltimate ? 'inline-block' : 'none';
 }
 
 function startGame(selectedMode, level) {
@@ -885,9 +904,15 @@ function updateClockDisplay() {
     var sideOnClockMs = (currentState.turn === 'w') ? whiteMs : blackMs;
     if (sideOnClockMs <= 0 && !gameOver && !clockTimeoutFetchFired) {
         clockTimeoutFetchFired = true;
-        OnlineClient.fetchState(onlineRoom, function (err, data) {
-            if (!err && data) { applyServerState(data); }
-        });
+        if (mode === 'ultimate') {
+            UltimateClient.fetchGameState(ucGameId, function (err, data) {
+                if (!err && data) { applyUltimateState(data); }
+            });
+        } else {
+            OnlineClient.fetchState(onlineRoom, function (err, data) {
+                if (!err && data) { applyServerState(data); }
+            });
+        }
     }
 }
 
@@ -2224,8 +2249,203 @@ function cancelSeekMatch() {
     showScreen('lichess-menu');
 }
 
+/* ---- Ultimate Chess Matchmaking ----
+ * A completely separate multiplayer system (Cloudflare Workers + Durable
+ * Objects, see cf-worker/ and js/ultimateChess.js) - no Lichess, no
+ * account, its own dedicated game room per match. The client-side shape
+ * deliberately mirrors the Lichess/online-room patterns already proven
+ * elsewhere in this file (optimistic local move + authoritative FEN
+ * re-sync on poll, the shared clock-tick machinery originally written for
+ * this app's own online rooms), since the underlying architecture -
+ * server-authoritative state fetched by polling, moves sent by POST - is
+ * the same shape either way. */
+
+function openUltimateMenuScreen() {
+    setMessage('ultimate-menu-error', '');
+    showScreen('ultimate-menu');
+}
+
+function startUltimateFindMatch() {
+    setMessage('ultimate-menu-error', '');
+    var tc = document.getElementById('ultimate-timecontrol-select').value.split(',');
+    var timeControlSec = parseInt(tc[0], 10);
+    var incrementSec = parseInt(tc[1], 10);
+
+    UltimateClient.joinQueue(timeControlSec, incrementSec, function (err, data) {
+        if (err || !data) { setMessage('ultimate-menu-error', describeRequestError(err)); return; }
+        ucTicketId = data.ticketId;
+        setMessage('ultimate-matching-error', '');
+        showScreen('ultimate-matching');
+        if (data.matched && data.gameId) { beginUltimateGame(data.gameId, data.color); return; }
+        OnlineClient.startPolling(function (cb) {
+            UltimateClient.pollQueue(ucTicketId, cb);
+        }, 1200, onUltimateQueuePollUpdate);
+    });
+}
+
+function onUltimateQueuePollUpdate(err, data) {
+    if (err || !data) { setMessage('ultimate-matching-error', describeRequestError(err)); return; }
+    setMessage('ultimate-matching-error', '');
+    if (data.matched && data.gameId) {
+        OnlineClient.stopPolling();
+        beginUltimateGame(data.gameId, data.color);
+    }
+}
+
+function cancelUltimateSearch() {
+    OnlineClient.stopPolling();
+    if (ucTicketId) {
+        UltimateClient.cancelQueue(ucTicketId, function () { /* best-effort - screen is already leaving either way */ });
+    }
+    ucTicketId = null;
+    showScreen('ultimate-menu');
+}
+
+function beginUltimateGame(gameId, color) {
+    mode = 'ultimate';
+    ucGameId = gameId;
+    ucColor = color;
+    ucMoveInFlight = false;
+    currentState = ChessEngine.createInitialState();
+    historyStack = [];
+    moveSanHistory = [];
+    positionCounts = {};
+    lastMove = null;
+    gameOver = false;
+    selectedSquare = null;
+    flipped = (color === 'b');
+    recomputeLegalMoves();
+    recountPositions();
+    buildBoardTable();
+    updateBoardDisplay();
+    updateStatusText();
+    renderMoveHistory();
+    applyModeControlVisibility();
+    onlineTimerEnabled = false;
+    clockTimeoutFetchFired = false;
+    document.getElementById('lichess-clock').style.display = 'none';
+    document.getElementById('puzzle-info').style.display = 'none';
+    showScreen('game');
+    startClockTick();
+    OnlineClient.startPolling(function (cb) {
+        UltimateClient.fetchGameState(ucGameId, cb);
+    }, 1500, onUltimateGameUpdate);
+}
+
+function onUltimateGameUpdate(err, data) {
+    if (err || !data) { return; } /* transient poll hiccup - just wait for the next tick */
+    if (!data.found) {
+        /* The game room genuinely doesn't exist (a bad/stale gameId) -
+         * this should only happen if something upstream is badly wrong,
+         * since a match always creates its room before either side is
+         * told about it. Bail out to the menu rather than spin forever. */
+        OnlineClient.stopPolling();
+        showGameOver('Could not reach this game.');
+        return;
+    }
+    applyUltimateState(data);
+}
+
+function applyUltimateState(data) {
+    onlineTimerEnabled = true;
+    clockWhiteMs = data.whiteTimeLeftMs;
+    clockBlackMs = data.blackTimeLeftMs;
+    clockTurnStartedAt = data.turnStartedAt;
+    clockTimeoutFetchFired = false;
+
+    currentState = ChessEngine.stateFromFen(data.fen);
+    lastMove = data.lastMove;
+    selectedSquare = null;
+    recomputeLegalMoves();
+    updateBoardDisplay();
+    updateClockDisplay();
+
+    /* The full UCI move list doubles as the move-history source (same
+     * technique Watch Games already uses) - recomputed fresh each poll
+     * rather than tracked incrementally, which is cheap and can't drift. */
+    var replay = ChessEngine.replayUciMoves(data.moves);
+    if (replay) {
+        var sans = [];
+        for (var i = 0; i < replay.moves.length; i++) {
+            sans.push(ChessEngine.moveToSan(replay.states[i], replay.moves[i]));
+        }
+        moveSanHistory = sans;
+        renderMoveHistory();
+    }
+
+    if (data.status === 'finished') {
+        if (!gameOver) {
+            gameOver = true;
+            OnlineClient.stopPolling();
+            stopClockTick();
+            showGameOver(ultimateResultMessage(data.result));
+        }
+        return;
+    }
+    updateStatusText();
+}
+
+function ultimateResultMessage(result) {
+    var map = {
+        white_wins_checkmate: 'White wins by checkmate',
+        black_wins_checkmate: 'Black wins by checkmate',
+        white_wins_timeout: 'White wins on time',
+        black_wins_timeout: 'Black wins on time',
+        white_wins_resign: 'White wins by resignation',
+        black_wins_resign: 'Black wins by resignation',
+        draw_stalemate: 'Draw by stalemate',
+        draw_material: 'Draw (insufficient material)',
+        draw_50move: 'Draw (50-move rule)'
+    };
+    return map[result] || 'Game over';
+}
+
+function commitUltimateMove(mv) {
+    if (ucMoveInFlight) { return; } /* a move is already in flight - never send a second one on top of it */
+    var moverColor = currentState.turn;
+
+    ucMoveInFlight = true;
+    moveSanHistory.push(ChessEngine.moveToSan(currentState, mv)); /* must run BEFORE makeMove - moveToSan needs the pre-move position */
+    currentState = ChessEngine.makeMove(currentState, mv);
+    lastMove = { from: mv.from, to: mv.to };
+    selectedSquare = null;
+    recomputeLegalMoves();
+    updateBoardDisplay();
+    renderMoveHistory();
+
+    /* Mirror the server's own clock bookkeeping locally (same reasoning
+     * as commitOnlineMove) so the display doesn't jump before the poll
+     * confirms it. */
+    if (clockTurnStartedAt) {
+        var elapsedByMover = Date.now() - clockTurnStartedAt;
+        if (moverColor === 'w') { clockWhiteMs = Math.max(0, clockWhiteMs - elapsedByMover); }
+        else { clockBlackMs = Math.max(0, clockBlackMs - elapsedByMover); }
+        clockTurnStartedAt = Date.now();
+    }
+    updateClockDisplay();
+    updateStatusText();
+
+    UltimateClient.sendMove(ucGameId, mv.from, mv.to, mv.promotion, function (err, data) {
+        ucMoveInFlight = false;
+        if (!err && data && data.ok && data.state) { applyUltimateState(data.state); return; }
+        /* Rejected (stale local state, a race with a timeout, etc.) - the
+         * server is authoritative, so pull its real state rather than
+         * trust our optimistic guess any further. */
+        UltimateClient.fetchGameState(ucGameId, function (err2, data2) {
+            if (!err2 && data2) { applyUltimateState(data2); }
+        });
+    });
+}
+
+function resignUltimateGame() {
+    if (mode !== 'ultimate' || !ucGameId) { return; }
+    UltimateClient.resign(ucGameId, function (err, data) {
+        if (!err && data && data.state) { applyUltimateState(data.state); }
+    });
+}
+
 function undoMove() {
-    if (mode === 'online' || mode === 'lichess' || mode === 'puzzle' || mode === 'replay' || mode === 'watch') { return; }
+    if (mode === 'online' || mode === 'lichess' || mode === 'puzzle' || mode === 'replay' || mode === 'watch' || mode === 'ultimate') { return; }
     if (historyStack.length === 0) { return; }
     gameOver = false;
     hideOverlay('gameover-overlay');
@@ -2290,6 +2510,8 @@ function init() {
         if (mode === 'online') { showScreen('online-menu'); }
         else if (mode === 'lichess') { showScreen('lichess-menu'); }
         else if (mode === 'puzzle') { requestNextPuzzle(); }
+        else if (mode === 'ultimate') { showScreen('ultimate-menu'); }
+        else if (mode === 'watch') { showScreen('tv-list'); }
         else { startGame(mode, currentLevel); }
     };
     document.getElementById('btn-gameover-menu').onclick = function () { showScreen('splash'); };
@@ -2342,6 +2564,12 @@ function init() {
     document.getElementById('btn-matching-lichess-cancel').onclick = function () { cancelSeekMatch(); };
     document.getElementById('btn-seek-rated-casual').onclick = function () { seekSelectedRated = false; updateSeekChoiceButtons(); };
     document.getElementById('btn-seek-rated-rated').onclick = function () { seekSelectedRated = true; updateSeekChoiceButtons(); };
+
+    document.getElementById('btn-ultimate-matchmaking').onclick = function () { openUltimateMenuScreen(); };
+    document.getElementById('btn-ultimate-menu-back').onclick = function () { showScreen('splash'); };
+    document.getElementById('btn-ultimate-find-match').onclick = function () { startUltimateFindMatch(); };
+    document.getElementById('btn-ultimate-matching-cancel').onclick = function () { cancelUltimateSearch(); };
+    document.getElementById('btn-ultimate-resign').onclick = function () { resignUltimateGame(); };
     document.getElementById('btn-lichess-menu-back').onclick = function () { showScreen('splash'); };
     document.getElementById('btn-lichess-logout').onclick = function () { logoutOfLichess(); };
     document.getElementById('btn-lichess-challenge').onclick = function () { openLichessChallengeScreen(); };

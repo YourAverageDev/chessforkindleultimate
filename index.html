@@ -23,6 +23,7 @@
         </div>
         <div class="menu-buttons">
             <a href="javascript:void(0)" class="big-btn" id="btn-play-lichess">Play Lichess</a>
+            <a href="javascript:void(0)" class="big-btn" id="btn-ultimate-matchmaking">Ultimate Chess Matchmaking</a>
             <a href="javascript:void(0)" class="big-btn" id="btn-puzzles">Puzzles</a>
             <a href="javascript:void(0)" class="big-btn" id="btn-watch-games">Watch Games</a>
             <a href="javascript:void(0)" class="big-btn" id="btn-local-rooms">Local Rooms</a>
@@ -325,6 +326,40 @@
     </div>
 </div>
 
+<!-- ULTIMATE CHESS MATCHMAKING (separate backend - Cloudflare Workers +
+     Durable Objects, see cf-worker/ - no Lichess or account of any kind) -->
+<div id="ultimate-menu-screen" class="screen" style="display:none;">
+    <div class="splash-inner">
+        <h2>Ultimate Chess Matchmaking</h2>
+        <p class="hint">Instantly matched with another waiting player. No account, no Lichess - just this site.</p>
+
+        <p class="hint">Time control</p>
+        <select id="ultimate-timecontrol-select" class="tc-select">
+            <option value="60,0">Bullet &middot; 1+0</option>
+            <option value="180,0">Blitz &middot; 3+0</option>
+            <option value="300,0" selected>Blitz &middot; 5+0</option>
+            <option value="600,0">Rapid &middot; 10+0</option>
+            <option value="600,5">Rapid &middot; 10+5</option>
+        </select>
+
+        <div class="menu-buttons">
+            <a href="javascript:void(0)" class="big-btn" id="btn-ultimate-find-match">Find Match</a>
+        </div>
+        <p class="error-text" id="ultimate-menu-error"></p>
+        <a href="javascript:void(0)" class="text-link" id="btn-ultimate-menu-back">&laquo; Back</a>
+    </div>
+</div>
+
+<!-- ULTIMATE CHESS MATCHMAKING: SEARCHING -->
+<div id="ultimate-matching-screen" class="screen" style="display:none;">
+    <div class="splash-inner">
+        <h2>Searching&hellip;</h2>
+        <p class="hint">Looking for another player.</p>
+        <p class="error-text" id="ultimate-matching-error"></p>
+        <a href="javascript:void(0)" class="text-link" id="btn-ultimate-matching-cancel">&laquo; Cancel Search</a>
+    </div>
+</div>
+
 <!-- PUZZLES MENU -->
 <div id="puzzle-menu-screen" class="screen" style="display:none;">
     <div class="splash-inner">
@@ -456,6 +491,7 @@
         <a href="javascript:void(0)" class="ctrl-btn" id="btn-new">New Game</a>
         <a href="javascript:void(0)" class="ctrl-btn" id="btn-undo">Undo</a>
         <a href="javascript:void(0)" class="ctrl-btn" id="btn-resign" style="display:none;">Resign</a>
+        <a href="javascript:void(0)" class="ctrl-btn" id="btn-ultimate-resign" style="display:none;">Resign</a>
         <a href="javascript:void(0)" class="ctrl-btn" id="btn-draw" style="display:none;">Offer/Accept Draw</a>
         <a href="javascript:void(0)" class="ctrl-btn" id="btn-watch-stop" style="display:none;">Stop Watching</a>
         <a href="javascript:void(0)" class="ctrl-btn" id="btn-flip">Flip</a>
@@ -499,6 +535,7 @@
 <script src="js/ai.js"></script>
 <script src="js/online.js"></script>
 <script src="js/lichess.js"></script>
+<script src="js/ultimateChess.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

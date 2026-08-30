@@ -74,7 +74,12 @@ js/chessEngine.js    Pure rules engine: legal moves, check/mate/stalemate, castl
 js/ai.js             Iterative-deepening alpha-beta search used for "Play vs Computer"
 js/online.js         XHR client for the /api online-play routes (polling, no WebSockets)
 js/lichess.js        Lichess OAuth (PKCE, with a bundled pure-JS SHA-256) + Board API client
+js/ultimateChess.js  XHR client for Ultimate Chess Matchmaking (a separate Cloudflare Worker
+                     backend - see cf-worker/) - independent of both online.js and lichess.js
 js/app.js            UI controller: screens, board rendering, click handling, game flow
+cf-worker/           Ultimate Chess Matchmaking's own backend: a Cloudflare Worker + two
+                     Durable Objects (matchmaking queue, per-match game room). Deployed
+                     separately from the rest of this site - see cf-worker/README.md
 api/_room.js          Shared server-side helpers (Redis REST calls, room/token/replay logic)
 api/create-room.js    POST - creates a room (optionally public), returns a code + player token
 api/join-room.js      POST - joins an existing room as the second player
@@ -165,6 +170,30 @@ connect Upstash directly instead) with no code changes and no npm
 dependency. Without a KV store connected, the 2 Player and vs Computer
 modes work fine, but Online Play will show a "Something went wrong" error
 when creating or joining a room.
+
+## Ultimate Chess Matchmaking
+
+A second, **completely independent** real-time multiplayer system,
+separate from both Lichess play and this project's own Redis-backed
+online rooms above - no Lichess account, no dependency on either of those
+systems. "Find Match" automatically pairs you with another waiting
+player and drops you into a dedicated game room with server-authoritative
+moves and chess clocks; matches Cancel Search too.
+
+The backend is a [Cloudflare Worker with two Durable
+Objects](cf-worker/) (one global matchmaking queue, one game room per
+match) instead of Vercel + Redis - Durable Objects process requests to
+themselves one at a time, which is what makes the matchmaking race-free
+by construction rather than needing the extra re-check logic a plain
+key-value queue does. It still talks to the browser over plain HTTP
+long-polling, same as everywhere else in this app - no WebSockets. See
+[`cf-worker/README.md`](cf-worker/README.md) for the full architecture
+notes, the API surface, and step-by-step deployment instructions
+(including how to test it entirely locally, no Cloudflare account
+needed, before deploying for real). **This backend needs to be deployed
+separately from the main site** - until `js/ultimateChess.js`'s
+`API_BASE` is pointed at a real deployment, this one feature won't work,
+though nothing else in the app is affected.
 
 ## Lichess play
 
