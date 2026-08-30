@@ -116,7 +116,8 @@ async function exchangeCodeForToken(code, verifier, redirectUri) {
  * encodes it, or omit it for a bodyless POST. */
 async function lichessFetch(accessToken, path, options) {
     options = options || {};
-    var headers = { Authorization: 'Bearer ' + accessToken };
+    var headers = {};
+    if (accessToken) { headers.Authorization = 'Bearer ' + accessToken; }
     var body;
     if (options.form) {
         headers['Content-Type'] = 'application/x-www-form-urlencoded';

@@ -282,6 +282,17 @@ var LichessClient = (function () {
         request('GET', '/api/lichess/poll-events', sessionToken, null, callback);
     }
 
+    /* Puzzles need no session - the server proxies these to Lichess's
+     * public, unauthenticated puzzle endpoints (see api/lichess/_lichess.js
+     * and [action].js). */
+    function fetchDailyPuzzle(callback) {
+        request('GET', '/api/lichess/puzzle-daily', null, null, callback);
+    }
+
+    function fetchNextPuzzle(callback) {
+        request('GET', '/api/lichess/puzzle-next', null, null, callback);
+    }
+
     return {
         startLogin: startLogin,
         handleOAuthCallback: handleOAuthCallback,
@@ -296,6 +307,8 @@ var LichessClient = (function () {
         sendMove: sendMove,
         resign: resign,
         draw: draw,
-        pollEvents: pollEvents
+        pollEvents: pollEvents,
+        fetchDailyPuzzle: fetchDailyPuzzle,
+        fetchNextPuzzle: fetchNextPuzzle
     };
 })();
