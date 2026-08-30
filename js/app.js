@@ -1629,7 +1629,12 @@ function onWatchGameUpdate(err, data) {
         watchPollFailCount++;
         if (watchPollFailCount >= 3) {
             setText(document.getElementById('status-text'), 'Could not load this game.');
-            setText(document.getElementById('puzzle-info'), 'It may have ended, or could not be reached. Use Stop Watching to pick another game.');
+            /* Includes the raw error code/status so it can be reported
+             * back verbatim - this app has no way to check its own
+             * server logs, so this is the fastest path to diagnosing
+             * which specific call is failing and why. */
+            var detail = (err && err.data && err.data.error) ? err.data.error : ((err && err.status) ? ('http ' + err.status) : 'unknown error');
+            setText(document.getElementById('puzzle-info'), 'Error: ' + detail + '. Use Stop Watching to pick another game.');
         }
         return;
     }

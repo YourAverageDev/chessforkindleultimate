@@ -484,8 +484,18 @@ async function handleTvChannels(req, res) {
  * game-state's own finished-game fallback already uses). */
 async function handleWatchGame(req, res) {
     if (req.method !== 'GET') { return lichess.sendJson(res, 405, { error: 'method_not_allowed' }); }
-    var gameId = (req.query && req.query.gameId || '').toString();
-    if (!gameId) { return lichess.sendJson(res, 400, { error: 'missing_game_id' }); }
+    var rawGameId = (req.query && req.query.gameId || '').toString();
+    if (!rawGameId) { return lichess.sendJson(res, 400, { error: 'missing_game_id' }); }
+
+    /* Lichess's base game id is always 8 characters; a "full id" (as used
+     * to link a specific player's view of a game) tacks on 4 more. If
+     * handleTvChannels's `gameId` field ever turns out to actually be a
+     * full id rather than the plain game id this app assumed, using it
+     * as-is against /api/game/export/{id} would 404. Truncating is a
+     * no-op (and therefore harmless) for an already-correct 8-char id, and
+     * only matters if that assumption was wrong - can't confirm either
+     * way without live access, so this is cheap insurance either way. */
+    var gameId = rawGameId.length > 8 ? rawGameId.substring(0, 8) : rawGameId;
 
     /* `pgnInJson=true` is required here, not optional - without it,
      * /api/game/export/{id} returns raw PGN text (not JSON) by default,
@@ -499,13 +509,15 @@ async function handleWatchGame(req, res) {
      * handleMyGames) - this one was just missing it. */
     var result = await lichess.lichessFetch(null, '/api/game/export/' + encodeURIComponent(gameId) + '?moves=true&pgnInJson=true');
     if (!result.ok) {
-        return lichess.sendJson(res, result.status || 502, { error: 'watch_game_failed', detail: result.data });
+        console.error('watch-game: export failed for ' + gameId + ' (from ' + rawGameId + '): status ' + result.status + ' ' + JSON.stringify(result.data));
+        return lichess.sendJson(res, result.status || 502, { error: 'watch_game_failed', status: result.status, detail: result.data });
     }
     var g = result.data || {};
     if (g.raw !== undefined) {
         /* lichessFetch's JSON.parse fell back - the response wasn't JSON
          * at all, so nothing below can be trusted. Report this as a real
          * failure instead of silently returning an empty/null game. */
+        console.error('watch-game: export for ' + gameId + ' was not JSON: ' + String(g.raw).slice(0, 200));
         return lichess.sendJson(res, 502, { error: 'watch_game_bad_response' });
     }
     var players = g.players || {};
