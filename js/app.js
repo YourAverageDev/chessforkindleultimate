@@ -79,6 +79,18 @@ var lichessMoveInFlight = false;
 var lichessPollFailCount = 0;
 var lichessIncomingChallenges = [];
 
+/* Puzzle mode state. No Lichess login needed - the puzzle endpoints are
+ * public. puzzleSolution is the full UCI move list Lichess returns
+ * (alternating: opponent's setup move, then solver, opponent, solver...);
+ * puzzleSolverIndex is which entry comes next. puzzleAutoPlaying blocks
+ * board input while the opponent's scripted reply is being played out. */
+var puzzleSolution = [];
+var puzzleSolverIndex = 0;
+var puzzleColor = 'w';
+var puzzleAutoPlaying = false;
+var puzzleRating = null;
+var puzzleThemes = [];
+
 function setText(el, str) {
     if (el.textContent !== undefined) { el.textContent = str; }
     else { el.innerText = str; }
@@ -88,6 +100,7 @@ var ALL_SCREENS = [
     'splash', 'local-rooms', 'difficulty',
     'online-menu', 'online-public', 'online-public-list', 'online-join', 'online-waiting',
     'lichess-login', 'lichess-menu', 'lichess-challenge', 'lichess-waiting', 'lichess-incoming',
+    'puzzle-menu',
     'game'
 ];
 
@@ -185,12 +198,14 @@ function sizeBoard() {
     var clocks = document.getElementById('chess-clocks');
     var lichessClock = document.getElementById('lichess-clock');
     var banner = document.getElementById('reconnect-banner');
+    var puzzleInfo = document.getElementById('puzzle-info');
     var statusH = (statusBar && statusBar.offsetHeight) || 30;
     var controlsH = (controls && controls.offsetHeight) || 60;
     var clocksH = (clocks && clocks.offsetHeight) || 0; /* 0 when hidden (display:none) */
     var lichessClockH = (lichessClock && lichessClock.offsetHeight) || 0;
     var bannerH = (banner && banner.offsetHeight) || 0;
-    var reserved = statusH + controlsH + clocksH + lichessClockH + bannerH + 40; /* margins/padding breathing room */
+    var puzzleInfoH = (puzzleInfo && puzzleInfo.offsetHeight) || 0;
+    var reserved = statusH + controlsH + clocksH + lichessClockH + bannerH + puzzleInfoH + 40; /* margins/padding breathing room */
 
     var availableW = vw - 12;
     var availableH = vh - reserved;
@@ -279,6 +294,8 @@ function updateStatusText(status) {
         text = (currentState.turn === onlineColor ? 'Your move' : "Waiting for opponent's move") + checkSuffix;
     } else if (mode === 'lichess' && !gameOver) {
         text = (currentState.turn === lichessColor ? 'Your move' : "Waiting for opponent's move") + checkSuffix;
+    } else if (mode === 'puzzle' && !gameOver) {
+        text = 'Find the best move for ' + turnName + checkSuffix;
     } else if (status === 'check') {
         text = turnName + ' to move — Check!';
     } else {
@@ -374,6 +391,7 @@ function pickPromotion(pieceType) {
     if (!chosen) { return; }
     if (mode === 'online') { commitOnlineMove(chosen); }
     else if (mode === 'lichess') { commitLichessMove(chosen); }
+    else if (mode === 'puzzle') { commitPuzzleMove(chosen); }
     else { commitMove(chosen); }
 }
 
@@ -382,6 +400,7 @@ function onSquareClick(idx) {
     if (mode === 'ai' && currentState.turn === aiColor) { return; }
     if (mode === 'online' && currentState.turn !== onlineColor) { return; }
     if (mode === 'lichess' && (currentState.turn !== lichessColor || lichessMoveInFlight)) { return; }
+    if (mode === 'puzzle' && (currentState.turn !== puzzleColor || puzzleAutoPlaying)) { return; }
 
     var piece = currentState.board[idx];
 
@@ -394,6 +413,7 @@ function onSquareClick(idx) {
         if (matches.length === 1) {
             if (mode === 'online') { commitOnlineMove(matches[0]); }
             else if (mode === 'lichess') { commitLichessMove(matches[0]); }
+            else if (mode === 'puzzle') { commitPuzzleMove(matches[0]); }
             else { commitMove(matches[0]); }
             return;
         }
@@ -410,8 +430,9 @@ function onSquareClick(idx) {
 function applyModeControlVisibility() {
     var isOnline = (mode === 'online');
     var isLichess = (mode === 'lichess');
-    document.getElementById('btn-new').style.display = (isOnline || isLichess) ? 'none' : 'inline-block';
-    document.getElementById('btn-undo').style.display = (isOnline || isLichess) ? 'none' : 'inline-block';
+    var isPuzzle = (mode === 'puzzle');
+    document.getElementById('btn-new').style.display = (isOnline || isLichess || isPuzzle) ? 'none' : 'inline-block';
+    document.getElementById('btn-undo').style.display = (isOnline || isLichess || isPuzzle) ? 'none' : 'inline-block';
     document.getElementById('btn-resign').style.display = isLichess ? 'inline-block' : 'none';
     document.getElementById('btn-draw').style.display = isLichess ? 'inline-block' : 'none';
 }
@@ -435,6 +456,7 @@ function startGame(selectedMode, level) {
     updateStatusText();
     applyModeControlVisibility();
     document.getElementById('lichess-clock').style.display = 'none';
+    document.getElementById('puzzle-info').style.display = 'none';
     showScreen('game');
 }
 
@@ -566,6 +588,7 @@ function beginOnlineGame() {
     onlineTimerEnabled = false;
     clockTimeoutFetchFired = false;
     document.getElementById('lichess-clock').style.display = 'none';
+    document.getElementById('puzzle-info').style.display = 'none';
     showScreen('game');
     startClockTick();
     OnlineClient.startPolling(function (cb) { OnlineClient.fetchState(onlineRoom, cb); }, 1500, onOnlineGameUpdate);
@@ -996,6 +1019,7 @@ function beginLichessGame(gameId, color) {
     applyModeControlVisibility();
     document.getElementById('lichess-clock').style.display = 'block';
     document.getElementById('chess-clocks').style.display = 'none';
+    document.getElementById('puzzle-info').style.display = 'none';
     setReconnecting(false);
     showScreen('game');
     OnlineClient.startPolling(function (cb) {
@@ -1120,8 +1144,163 @@ function tryResumeLichessGame() {
     return true;
 }
 
+/* ---- puzzles ---- */
+
+function openPuzzleMenu() {
+    setMessage('puzzle-menu-error', '');
+    showScreen('puzzle-menu');
+}
+
+function formatPuzzleError(err) {
+    if (err && err.network) { return 'Network error — check your connection.'; }
+    return 'Could not load a puzzle right now. Please try again.';
+}
+
+function requestDailyPuzzle() {
+    setMessage('puzzle-menu-error', '');
+    LichessClient.fetchDailyPuzzle(onPuzzleDataLoaded);
+}
+
+function requestNextPuzzle() {
+    setMessage('puzzle-menu-error', '');
+    LichessClient.fetchNextPuzzle(onPuzzleDataLoaded);
+}
+
+function onPuzzleDataLoaded(err, data) {
+    if (err || !data || !data.solution || !data.solution.length) {
+        setMessage('puzzle-menu-error', formatPuzzleError(err));
+        return;
+    }
+    startPuzzleFromData(data);
+}
+
+/* Lichess's puzzle "solution" list is documented (for the puzzle CSV
+ * export, which this app's author could confirm without live API access -
+ * the live JSON endpoints could not be checked) as starting with the
+ * opponent's own "setup" move, i.e. `initialPly` replays to the position
+ * BEFORE that move, not the position the solver actually sees. This tries
+ * that convention first and falls back to treating the replayed position
+ * as the puzzle's start (solution[0] being the solver's own first move)
+ * if solution[0] doesn't turn out to be a legal move there - covers either
+ * convention without needing to guess correctly up front. */
+function startPuzzleFromData(data) {
+    var replayState = ChessEngine.replayPgnToPly(data.pgn, data.initialPly);
+    if (!replayState) {
+        setMessage('puzzle-menu-error', 'Could not read that puzzle. Please try another.');
+        return;
+    }
+
+    var solution = data.solution;
+    var puzzleState = replayState;
+    var solverIndex = 0;
+
+    if (solution.length) {
+        var legalAtReplay = ChessEngine.generateLegalMoves(replayState);
+        var setupMove = ChessEngine.findMoveByUci(legalAtReplay, solution[0]);
+        if (setupMove) {
+            puzzleState = ChessEngine.makeMove(replayState, setupMove);
+            solverIndex = 1;
+        }
+    }
+
+    if (solverIndex >= solution.length) {
+        setMessage('puzzle-menu-error', 'Could not read that puzzle. Please try another.');
+        return;
+    }
+
+    mode = 'puzzle';
+    puzzleSolution = solution;
+    puzzleSolverIndex = solverIndex;
+    puzzleColor = puzzleState.turn;
+    puzzleAutoPlaying = false;
+    puzzleRating = data.rating;
+    puzzleThemes = data.themes || [];
+    currentState = puzzleState;
+    historyStack = [];
+    lastMove = null;
+    gameOver = false;
+    selectedSquare = null;
+    flipped = (puzzleColor === 'b');
+    recomputeLegalMoves();
+    buildBoardTable();
+    updateBoardDisplay();
+    updateStatusText();
+    applyModeControlVisibility();
+    document.getElementById('lichess-clock').style.display = 'none';
+    document.getElementById('chess-clocks').style.display = 'none';
+
+    var infoBox = document.getElementById('puzzle-info');
+    var infoText = puzzleRating ? ('Puzzle rating: ' + puzzleRating) : 'Puzzle';
+    if (puzzleThemes.length) { infoText += '  ·  ' + puzzleThemes.slice(0, 3).join(', '); }
+    setText(infoBox, infoText);
+    infoBox.style.display = 'block';
+
+    showScreen('game');
+    sizeBoard();
+}
+
+function commitPuzzleMove(mv) {
+    if (gameOver || puzzleAutoPlaying) { return; }
+    var uci = ChessEngine.moveToUci(mv);
+    var expected = puzzleSolution[puzzleSolverIndex];
+
+    if (uci !== expected) {
+        selectedSquare = null;
+        updateBoardDisplay();
+        setText(document.getElementById('status-text'), 'Not quite — try again.');
+        return;
+    }
+
+    currentState = ChessEngine.makeMove(currentState, mv);
+    lastMove = { from: mv.from, to: mv.to };
+    selectedSquare = null;
+    recomputeLegalMoves();
+    updateBoardDisplay();
+    puzzleSolverIndex++;
+
+    if (puzzleSolverIndex >= puzzleSolution.length) {
+        gameOver = true;
+        showGameOver('Puzzle solved!');
+        return;
+    }
+
+    setText(document.getElementById('status-text'), 'Correct!');
+    puzzleAutoPlaying = true;
+    setTimeout(playPuzzleOpponentReply, 500);
+}
+
+function playPuzzleOpponentReply() {
+    var replyUci = puzzleSolution[puzzleSolverIndex];
+    var legalNow = ChessEngine.generateLegalMoves(currentState);
+    var replyMove = ChessEngine.findMoveByUci(legalNow, replyUci);
+    puzzleAutoPlaying = false;
+
+    if (!replyMove) {
+        /* The reconstructed position and Lichess's own no longer agree -
+         * likely the PGN-replay/SAN-parsing assumptions above didn't hold
+         * for this particular puzzle. Rather than get stuck, end the
+         * puzzle attempt cleanly so the player can just grab another one. */
+        gameOver = true;
+        showGameOver("Couldn't continue this puzzle — please try another.");
+        return;
+    }
+
+    currentState = ChessEngine.makeMove(currentState, replyMove);
+    lastMove = { from: replyMove.from, to: replyMove.to };
+    recomputeLegalMoves();
+    updateBoardDisplay();
+    puzzleSolverIndex++;
+
+    if (puzzleSolverIndex >= puzzleSolution.length) {
+        gameOver = true;
+        showGameOver('Puzzle solved!');
+    } else {
+        updateStatusText();
+    }
+}
+
 function undoMove() {
-    if (mode === 'online' || mode === 'lichess') { return; }
+    if (mode === 'online' || mode === 'lichess' || mode === 'puzzle') { return; }
     if (historyStack.length === 0) { return; }
     gameOver = false;
     hideOverlay('gameover-overlay');
@@ -1148,6 +1327,10 @@ function init() {
     document.getElementById('btn-play-lichess').onclick = function () { goToLichessHome(); };
     document.getElementById('btn-local-rooms').onclick = function () { showScreen('local-rooms'); };
     document.getElementById('btn-local-rooms-back').onclick = function () { showScreen('splash'); };
+    document.getElementById('btn-puzzles').onclick = function () { openPuzzleMenu(); };
+    document.getElementById('btn-puzzle-menu-back').onclick = function () { showScreen('splash'); };
+    document.getElementById('btn-puzzle-daily').onclick = function () { requestDailyPuzzle(); };
+    document.getElementById('btn-puzzle-random').onclick = function () { requestNextPuzzle(); };
 
     document.getElementById('btn-2p').onclick = function () { startGame('2p', null); };
     document.getElementById('btn-vs-ai').onclick = function () { showScreen('difficulty'); };
@@ -1170,6 +1353,7 @@ function init() {
     document.getElementById('btn-gameover-new').onclick = function () {
         if (mode === 'online') { showScreen('online-menu'); }
         else if (mode === 'lichess') { showScreen('lichess-menu'); }
+        else if (mode === 'puzzle') { requestNextPuzzle(); }
         else { startGame(mode, currentLevel); }
     };
     document.getElementById('btn-gameover-menu').onclick = function () { showScreen('splash'); };

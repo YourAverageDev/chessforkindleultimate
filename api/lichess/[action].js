@@ -323,6 +323,49 @@ async function handlePollEvents(req, res) {
     return lichess.sendJson(res, 200, { challenges: incomingChallenges, gameStarts: gameStarts });
 }
 
+/* Puzzles need no Lichess login at all - /api/puzzle/daily and
+ * /api/puzzle/next are public reads. Response shape is this app's
+ * best-effort reconstruction (again, no live access while writing this):
+ * { game: { pgn: "e4 e5 Nf3 ..." }, puzzle: { id, rating, themes,
+ * initialPly, solution: ["e2e4", ...] } } - `pgn` is the SAN movetext of
+ * the whole game the puzzle was taken from, and the client replays it
+ * with its own chess engine up to `initialPly` to reconstruct the start
+ * position, since there's no FEN field to just read directly. See
+ * js/chessEngine.js's replayPgnToPly/sanToMove and js/app.js's puzzle
+ * loading code for that logic and its own fallback for getting the
+ * solution's move-0 convention (setup move vs. solver's first move)
+ * backwards if this assumption turns out wrong on first real contact. */
+function normalizePuzzleResponse(data) {
+    var game = (data && data.game) || {};
+    var puzzle = (data && data.puzzle) || {};
+    return {
+        puzzleId: puzzle.id || null,
+        rating: (typeof puzzle.rating === 'number') ? puzzle.rating : null,
+        themes: puzzle.themes || [],
+        initialPly: (typeof puzzle.initialPly === 'number') ? puzzle.initialPly : 0,
+        solution: puzzle.solution || [],
+        pgn: game.pgn || ''
+    };
+}
+
+async function handlePuzzleDaily(req, res) {
+    if (req.method !== 'GET') { return lichess.sendJson(res, 405, { error: 'method_not_allowed' }); }
+    var result = await lichess.lichessFetch(null, '/api/puzzle/daily');
+    if (!result.ok) {
+        return lichess.sendJson(res, result.status || 502, { error: 'puzzle_fetch_failed', detail: result.data });
+    }
+    return lichess.sendJson(res, 200, normalizePuzzleResponse(result.data));
+}
+
+async function handlePuzzleNext(req, res) {
+    if (req.method !== 'GET') { return lichess.sendJson(res, 405, { error: 'method_not_allowed' }); }
+    var result = await lichess.lichessFetch(null, '/api/puzzle/next');
+    if (!result.ok) {
+        return lichess.sendJson(res, result.status || 502, { error: 'puzzle_fetch_failed', detail: result.data });
+    }
+    return lichess.sendJson(res, 200, normalizePuzzleResponse(result.data));
+}
+
 var ACTIONS = {
     'oauth-exchange': handleOauthExchange,
     'me': handleMe,
@@ -334,7 +377,9 @@ var ACTIONS = {
     'move': handleMove,
     'resign': handleResign,
     'draw': handleDraw,
-    'poll-events': handlePollEvents
+    'poll-events': handlePollEvents,
+    'puzzle-daily': handlePuzzleDaily,
+    'puzzle-next': handlePuzzleNext
 };
 
 module.exports = async function handler(req, res) {

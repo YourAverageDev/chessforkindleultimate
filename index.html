@@ -23,6 +23,7 @@
         </div>
         <div class="menu-buttons">
             <a href="javascript:void(0)" class="big-btn" id="btn-play-lichess">Play Lichess</a>
+            <a href="javascript:void(0)" class="big-btn" id="btn-puzzles">Puzzles</a>
             <a href="javascript:void(0)" class="big-btn" id="btn-local-rooms">Local Rooms</a>
         </div>
         <p class="hint">Tap a piece, then tap where it should go.</p>
@@ -138,6 +139,20 @@
     </div>
 </div>
 
+<!-- PUZZLES MENU -->
+<div id="puzzle-menu-screen" class="screen" style="display:none;">
+    <div class="splash-inner">
+        <h2>Puzzles</h2>
+        <p class="hint">Solve tactics from Lichess's puzzle database. No login needed.</p>
+        <div class="menu-buttons">
+            <a href="javascript:void(0)" class="big-btn" id="btn-puzzle-daily">Daily Puzzle</a>
+            <a href="javascript:void(0)" class="big-btn" id="btn-puzzle-random">Random Puzzle</a>
+        </div>
+        <p class="error-text" id="puzzle-menu-error"></p>
+        <a href="javascript:void(0)" class="text-link" id="btn-puzzle-menu-back">&laquo; Back</a>
+    </div>
+</div>
+
 <!-- ONLINE MENU -->
 <div id="online-menu-screen" class="screen" style="display:none;">
     <div class="splash-inner">
@@ -237,6 +252,8 @@
     </div>
 
     <div id="lichess-clock" style="display:none;"></div>
+
+    <div id="puzzle-info" style="display:none;"></div>
 
     <div id="board-wrap">
         <table id="board-table" cellspacing="0" cellpadding="0"></table>

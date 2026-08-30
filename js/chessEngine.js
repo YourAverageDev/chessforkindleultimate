@@ -451,6 +451,99 @@ var ChessEngine = (function () {
         return parts.join('') + '|' + state.turn + '|' + (c.wK ? 1 : 0) + (c.wQ ? 1 : 0) + (c.bK ? 1 : 0) + (c.bQ ? 1 : 0) + '|' + (state.ep === null ? 'x' : state.ep);
     }
 
+    /* SAN ("Nf3", "exd5", "e8=Q", "O-O") -> our {from,to,promotion,...} move
+     * shape, resolved against the actual legal moves in `state` rather than
+     * a standalone parser - this sidesteps needing to implement SAN's own
+     * disambiguation/check-mark rules from scratch, since generateLegalMoves
+     * already knows exactly what's legal. Used for replaying a Lichess
+     * puzzle's PGN (see replayPgnToPly below), since the puzzle API gives
+     * movetext, not a FEN, for the position the puzzle starts from. Returns
+     * null if the token can't be resolved to exactly one legal move. */
+    function sanToMove(state, sanRaw) {
+        var san = (sanRaw || '').replace(/^\s+|\s+$/g, '');
+        if (!san) { return null; }
+        var legal = generateLegalMoves(state);
+        var stripped = san.replace(/[+#!?]+$/g, '').replace(/0/g, 'O');
+
+        if (stripped === 'O-O') {
+            for (var i = 0; i < legal.length; i++) { if (legal[i].flag === 'castleK') { return legal[i]; } }
+            return null;
+        }
+        if (stripped === 'O-O-O') {
+            for (var j = 0; j < legal.length; j++) { if (legal[j].flag === 'castleQ') { return legal[j]; } }
+            return null;
+        }
+
+        var m = /^([NBRQK]?)([a-h]?)([1-8]?)(x?)([a-h][1-8])(?:=([NBRQ]))?$/.exec(stripped);
+        if (!m) { return null; }
+        var pieceLetterMap = { N: 'n', B: 'b', R: 'r', Q: 'q', K: 'k' };
+        var pieceType = m[1] ? pieceLetterMap[m[1]] : 'p';
+        var disambigFile = m[2] || null;
+        var disambigRank = m[3] || null;
+        var dest = algebraicToSquare(m[5]);
+        var promotion = m[6] ? m[6].toLowerCase() : null;
+        if (dest === null) { return null; }
+
+        var candidates = [];
+        for (var k = 0; k < legal.length; k++) {
+            var mv = legal[k];
+            if (mv.to !== dest) { continue; }
+            var piece = state.board[mv.from];
+            if (!piece || piece.type !== pieceType) { continue; }
+            if (promotion ? (mv.promotion !== promotion) : !!mv.promotion) { continue; }
+            var fromFile = String.fromCharCode(97 + (mv.from % 8));
+            var fromRank = String(Math.floor(mv.from / 8) + 1);
+            if (disambigFile && disambigFile !== fromFile) { continue; }
+            if (disambigRank && disambigRank !== fromRank) { continue; }
+            candidates.push(mv);
+        }
+        return (candidates.length === 1) ? candidates[0] : null;
+    }
+
+    /* Splits a PGN movetext blob into plain SAN tokens, tolerating either
+     * "e4 e5 Nf3" (no move numbers, what this app's author believes the
+     * Lichess puzzle API returns) or "1. e4 e5 2. Nf3 Nc6" / "1.e4" styles,
+     * plus a trailing result token, since none of that could be checked
+     * against the real API while writing this. */
+    function tokenizePgnMoves(pgn) {
+        var raw = (pgn || '').split(/\s+/);
+        var out = [];
+        for (var i = 0; i < raw.length; i++) {
+            var t = raw[i].replace(/^\d+\.+/, '').replace(/^\s+|\s+$/g, '');
+            if (!t) { continue; }
+            if (t === '1-0' || t === '0-1' || t === '1/2-1/2' || t === '*') { continue; }
+            out.push(t);
+        }
+        return out;
+    }
+
+    /* Replays a PGN's mainline from the start position up to `ply` half-moves,
+     * returning the resulting state, or null if any move along the way
+     * can't be resolved (malformed PGN, or a SAN token this parser can't
+     * handle). */
+    function replayPgnToPly(pgn, ply) {
+        var state = createInitialState();
+        var tokens = tokenizePgnMoves(pgn);
+        var n = Math.min(ply || 0, tokens.length);
+        for (var i = 0; i < n; i++) {
+            var mv = sanToMove(state, tokens[i]);
+            if (!mv) { return null; }
+            state = makeMove(state, mv);
+        }
+        return state;
+    }
+
+    /* Finds the legal move (with correct flag/captured info - unlike a bare
+     * uciToMove result) matching a given UCI string, e.g. to apply a move
+     * an external source (Lichess's puzzle "solution" array) named only by
+     * UCI rather than handing over a move object. */
+    function findMoveByUci(moves, uci) {
+        for (var i = 0; i < moves.length; i++) {
+            if (moveToUci(moves[i]) === uci) { return moves[i]; }
+        }
+        return null;
+    }
+
     var api = {
         createInitialState: createInitialState,
         generateLegalMoves: generateLegalMoves,
@@ -466,7 +559,11 @@ var ChessEngine = (function () {
         squareToAlgebraic: squareToAlgebraic,
         algebraicToSquare: algebraicToSquare,
         moveToUci: moveToUci,
-        uciToMove: uciToMove
+        uciToMove: uciToMove,
+        sanToMove: sanToMove,
+        tokenizePgnMoves: tokenizePgnMoves,
+        replayPgnToPly: replayPgnToPly,
+        findMoveByUci: findMoveByUci
     };
 
     /* Also usable from Node (api/*.js serverless functions use this same
