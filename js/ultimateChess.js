@@ -36,18 +36,31 @@ var UltimateClient = (function () {
         return id;
     }
 
+    /* xhr.timeout ensures a hung connection always resolves the request
+     * one way or another, instead of leaving the poll loop's callback
+     * waiting forever (see the identical fix/comment in online.js and
+     * lichess.js). `done` stops timeout/onerror/onreadystatechange from
+     * racing each other into a double callback. */
     function request(method, path, body, callback) {
         var xhr = new XMLHttpRequest();
+        var done = false;
+        function finish(err, data) {
+            if (done) { return; }
+            done = true;
+            callback(err, data);
+        }
         xhr.open(method, path, true);
+        xhr.timeout = 12000;
         if (body) { xhr.setRequestHeader('Content-Type', 'application/json'); }
         xhr.onreadystatechange = function () {
             if (xhr.readyState !== 4) { return; }
             var data = null;
             try { data = JSON.parse(xhr.responseText); } catch (e) { data = null; }
-            if (xhr.status >= 200 && xhr.status < 300 && data) { callback(null, data); }
-            else { callback({ status: xhr.status, data: data }, null); }
+            if (xhr.status >= 200 && xhr.status < 300 && data) { finish(null, data); }
+            else { finish({ status: xhr.status, data: data }, null); }
         };
-        xhr.onerror = function () { callback({ status: 0, data: null, network: true }, null); };
+        xhr.onerror = function () { finish({ status: 0, data: null, network: true }, null); };
+        xhr.ontimeout = function () { finish({ status: 0, data: null, network: true, timeout: true }, null); };
         xhr.send(body ? JSON.stringify(body) : null);
     }
 

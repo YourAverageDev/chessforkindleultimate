@@ -9,22 +9,39 @@ var OnlineClient = (function () {
     var pollTimer = null;
     var pollToken = 0; /* invalidates in-flight requests from a previous startPolling/stopPolling */
 
+    /* xhr.timeout guarantees this request always finishes one way or
+     * another - without it, a hung connection (flaky wifi, or the server
+     * just not answering) would leave both onreadystatechange and onerror
+     * silent forever, so the poll loop's callback never ran and the next
+     * poll never got scheduled: live play would quietly stop responding
+     * for good. `done` guards against timeout/onerror/onreadystatechange
+     * racing each other into calling back twice for the same request. */
     function request(method, url, body, callback) {
         var xhr = new XMLHttpRequest();
+        var done = false;
+        function finish(err, data) {
+            if (done) { return; }
+            done = true;
+            callback(err, data);
+        }
         xhr.open(method, url, true);
+        xhr.timeout = 12000;
         xhr.setRequestHeader('Content-Type', 'application/json');
         xhr.onreadystatechange = function () {
             if (xhr.readyState !== 4) { return; }
             var data = null;
             try { data = JSON.parse(xhr.responseText); } catch (e) { data = null; }
             if (xhr.status >= 200 && xhr.status < 300 && data) {
-                callback(null, data);
+                finish(null, data);
             } else {
-                callback({ status: xhr.status, data: data }, null);
+                finish({ status: xhr.status, data: data }, null);
             }
         };
         xhr.onerror = function () {
-            callback({ status: 0, data: null, network: true }, null);
+            finish({ status: 0, data: null, network: true }, null);
+        };
+        xhr.ontimeout = function () {
+            finish({ status: 0, data: null, network: true, timeout: true }, null);
         };
         xhr.send(body ? JSON.stringify(body) : null);
     }
