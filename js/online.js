@@ -91,7 +91,19 @@ var OnlineClient = (function () {
                  * actual game and reviving itself after the game's own
                  * polling has already started. */
                 if (myToken !== pollToken) { return; }
-                onUpdate(err, data);
+                try {
+                    onUpdate(err, data);
+                } catch (e) {
+                    /* An exception here must never silently kill this
+                     * loop - the game/room/search would just freeze at
+                     * whatever it last saw, indistinguishable from an
+                     * intentional stop, with nothing visible to explain
+                     * it (this is exactly how a live-play bug reported as
+                     * "pieces stopped responding" turned out to work: one
+                     * bad update killed all future polling). Log it and
+                     * keep going - the next tick gets a fresh chance. */
+                    if (window.console && console.error) { console.error('OnlineClient: onUpdate threw', e && e.message || e); }
+                }
                 if (myToken !== pollToken) { return; }
                 pollTimer = setTimeout(poll, intervalMs);
             });

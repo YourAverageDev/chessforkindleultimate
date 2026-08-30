@@ -1103,6 +1103,17 @@ function lichessResultMessage(data) {
 }
 
 function onLichessGameUpdate(err, data) {
+    /* A poll that was already in flight when we sent our own move can
+     * land after commitLichessMove's optimistic local update but still
+     * reflect the position from BEFORE Lichess processed that move -
+     * applying it would visibly revert the just-made move for a moment
+     * (reported as choppy/laggy play) until the next poll catches up.
+     * Since commitLichessMove's own callback already re-syncs from
+     * Lichess if the move is ever rejected, it's safe to just skip a
+     * routine poll landing while a send is still in flight and let the
+     * next one (after it resolves) apply the real, current position. */
+    if (lichessMoveInFlight) { return; }
+
     if (err || !data) {
         lichessPollFailCount++;
         if (lichessPollFailCount >= 2) { setReconnecting(true); }

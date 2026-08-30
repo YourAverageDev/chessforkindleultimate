@@ -206,17 +206,37 @@ async function handleGameState(req, res) {
         }
     }
 
-    /* Not in the "now playing" list any more - it ended. Fetch the final
-     * result for display. */
+    /* Not in the "now playing" list any more - usually because it ended,
+     * but a real game reported live testing "bugs" (pieces freezing, the
+     * game randomly appearing over) traced back to here: nowPlaying can
+     * apparently miss a still-very-much-ongoing game for a poll or two
+     * (a transient listing gap, not a real end), and this code used to
+     * treat that miss alone as confident proof the game was over. Since
+     * the client takes "finished" as final (stops polling, shows the
+     * game-over screen, and refuses further moves), a false positive here
+     * looked exactly like the reported symptoms. Now this only reports
+     * finished when the export endpoint POSITIVELY confirms a real
+     * terminal status - any other outcome (the export call itself failing,
+     * or coming back without a recognizable terminal status) is reported
+     * as an ordinary failed lookup instead, which the client already
+     * treats as "poll hiccup, try again" rather than "game over". */
+    var TERMINAL_STATUSES = {
+        mate: true, resign: true, stalemate: true, timeout: true, outoftime: true,
+        draw: true, aborted: true, cheat: true, noStart: true, variantEnd: true
+    };
+
     var exportRes = await lichess.lichessFetch(auth.session.accessToken, '/api/game/export/' + encodeURIComponent(gameId) + '?pgnInJson=true');
     if (!exportRes.ok) {
-        return lichess.sendJson(res, 200, { active: false, finished: true, status: 'unknown' });
+        return lichess.sendJson(res, 502, { error: 'game_lookup_failed' });
     }
     var g2 = exportRes.data;
     /* Defensive: some Lichess API versions return `status` as a plain
      * string ("mate"), others as {id, name} - handle either shape rather
      * than assume, since this couldn't be checked live. */
     var statusValue = (g2.status && typeof g2.status === 'object') ? g2.status.name : g2.status;
+    if (!statusValue || !TERMINAL_STATUSES.hasOwnProperty(statusValue)) {
+        return lichess.sendJson(res, 502, { error: 'game_lookup_inconclusive' });
+    }
     return lichess.sendJson(res, 200, {
         active: false,
         finished: true,
