@@ -659,7 +659,10 @@ async function tryMatchTicket(myTicketId) {
 
         var mySession = await lichess.getSessionByToken(myTicket.sessionToken);
         var otherSession = await lichess.getSessionByToken(other.sessionToken);
-        if (!mySession || !otherSession) { continue; } /* one side's login expired - try another candidate */
+        if (!mySession || !otherSession) {
+            console.error('find-match: skipping candidate ' + otherId + ' - session missing for ' + (!mySession ? myTicket.username : other.username));
+            continue;
+        }
 
         try {
             /* Best-effort re-check immediately before creating the game,
@@ -677,6 +680,15 @@ async function tryMatchTicket(myTicketId) {
             await lichess.removeFromMatchQueue(otherId);
             return myTicket;
         } catch (e) {
+            /* Surfaced two ways: logged here (check Vercel's function logs
+             * for "find-match:" if search seems permanently stuck with a
+             * genuine partner present), and recorded on the ticket so the
+             * poll response can tell the client something more specific
+             * than "still nobody available" - see handleFindMatchPoll. */
+            var errMsg = String(e && e.message || e);
+            console.error('find-match: challenge creation failed between ' + myTicket.username + ' and ' + other.username + ': ' + errMsg);
+            myTicket.lastError = errMsg;
+            await lichess.saveMatchTicket(myTicketId, myTicket);
             continue; /* this candidate didn't pan out - try the next one instead of failing the whole poll */
         }
     }
@@ -708,7 +720,7 @@ async function handleFindMatchStart(req, res) {
 
     var result = await tryMatchTicket(ticketId);
     var matched = !!(result && result.matchedGameId);
-    return lichess.sendJson(res, 200, { ticketId: ticketId, matched: matched, gameId: matched ? result.matchedGameId : null });
+    return lichess.sendJson(res, 200, { ticketId: ticketId, matched: matched, gameId: matched ? result.matchedGameId : null, lastError: (result && result.lastError) || null });
 }
 
 async function handleFindMatchPoll(req, res) {
@@ -722,7 +734,7 @@ async function handleFindMatchPoll(req, res) {
     var result = await tryMatchTicket(ticketId);
     if (!result) { return lichess.sendJson(res, 200, { found: false }); }
     var matched = !!result.matchedGameId;
-    return lichess.sendJson(res, 200, { found: true, matched: matched, gameId: matched ? result.matchedGameId : null });
+    return lichess.sendJson(res, 200, { found: true, matched: matched, gameId: matched ? result.matchedGameId : null, lastError: result.lastError || null });
 }
 
 async function handleFindMatchCancel(req, res) {

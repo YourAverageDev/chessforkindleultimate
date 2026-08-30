@@ -1871,11 +1871,18 @@ function startFindMatch() {
 
 function onFindMatchPollUpdate(err, data) {
     if (err || !data) { setMessage('matching-error', formatLichessError(err)); return; }
-    setMessage('matching-error', '');
     if (data.matched && data.gameId) {
         OnlineClient.stopPolling();
+        setMessage('matching-error', '');
         onFoundMatch(data.gameId);
+        return;
     }
+    /* lastError means a partner WAS found but starting the Lichess game
+     * between you failed (see api/lichess/[action].js's tryMatchTicket) -
+     * still retrying against other candidates, but worth surfacing so
+     * "stuck searching" doesn't look identical to "nobody else is
+     * searching right now". */
+    setMessage('matching-error', data.lastError ? 'Found an opponent, but the game could not be started yet — retrying…' : '');
 }
 
 function onFoundMatch(gameId) {
