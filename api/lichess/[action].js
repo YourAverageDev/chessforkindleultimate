@@ -464,92 +464,81 @@ async function handleTvChannels(req, res) {
     for (var key in data) {
         if (!data.hasOwnProperty(key)) { continue; }
         var c = data[key];
-        if (!c) { continue; }
-        /* DEBUG: the assumed `gameId` field has been producing an id that
-         * 404s (as an HTML page, meaning it never even reached Lichess's
-         * API layer as a recognizable id) when used against
-         * /api/game/export/{id}. Rather than guess at another field name
-         * blind, every channel's ENTIRE raw object is included here
-         * (`raw`) so the true field names can be read directly off the
-         * Watch Games screen and reported back - no Vercel log access
-         * needed. Remove `raw` once the real field name is confirmed. */
+        if (!c || !c.gameId) { continue; }
+        /* Confirmed correct via a live debug dump: {user:{name,id},
+         * rating, gameId, color} - the `gameId` field really is the plain
+         * 8-char game id. The actual issue turned out to be downstream,
+         * in how that id was then used (see handleWatchGame). */
         channels.push({
             channel: key,
             name: (c.user && c.user.name) || 'Unknown',
             rating: (typeof c.rating === 'number') ? c.rating : null,
-            gameId: c.gameId || null,
-            raw: JSON.stringify(c)
+            gameId: c.gameId
         });
     }
     return lichess.sendJson(res, 200, { channels: channels });
 }
 
-/* Spectating re-polls a plain game export on every tick rather than
- * holding any kind of stream open - consistent with the rest of this
- * app's polling-only architecture, and much simpler than trying to sample
- * a spectator move stream (there's a public one - /api/stream/game/{id} -
- * but this app's author couldn't confirm its exact line shape without
- * live access, whereas /api/game/export/{id} is the same endpoint
- * game-state's own finished-game fallback already uses). */
+/* Confirmed live (a real Lichess gameId, extracted correctly - see
+ * handleTvChannels - genuinely fails against /api/game/export/{id} with a
+ * 404 whose body is Lichess's own web-app HTML 404 page, not a JSON API
+ * error). The most coherent explanation: that endpoint is for completed
+ * games only (an "export" of a permanent record) - handleGameState only
+ * ever calls it after confirming a game is no longer in nowPlaying, i.e.
+ * already finished, which is why that usage never showed this failure.
+ * A game still being played needs Lichess's actual live data instead:
+ * /api/stream/game/{id}, a PUBLIC (no auth) spectator stream - open to
+ * anyone, unlike the Board API's player-only game stream. Sampled in a
+ * bounded window per poll tick, same technique as poll-events/
+ * openBoundedSeek use elsewhere in this file for other must-stay-open
+ * Lichess endpoints that don't fit this app's polling-only architecture.
+ * The exact per-line shape of THIS specific stream could not be
+ * confirmed without live access, so this reads defensively for either a
+ * flat {fen, lm, ...} shape or a Board-API-style {state: {moves: "..."}}
+ * shape, and includes a small raw sample of what was actually received
+ * so a wrong guess here is immediately diagnosable from the Watch Games
+ * screen itself rather than another blind round. */
+var WATCH_SAMPLE_MS = 6000;
+
 async function handleWatchGame(req, res) {
     if (req.method !== 'GET') { return lichess.sendJson(res, 405, { error: 'method_not_allowed' }); }
-    var rawGameId = (req.query && req.query.gameId || '').toString();
-    if (!rawGameId) { return lichess.sendJson(res, 400, { error: 'missing_game_id' }); }
+    var gameId = (req.query && req.query.gameId || '').toString();
+    if (!gameId) { return lichess.sendJson(res, 400, { error: 'missing_game_id' }); }
 
-    /* Lichess's base game id is always 8 characters; a "full id" (as used
-     * to link a specific player's view of a game) tacks on 4 more. If
-     * handleTvChannels's `gameId` field ever turns out to actually be a
-     * full id rather than the plain game id this app assumed, using it
-     * as-is against /api/game/export/{id} would 404. Truncating is a
-     * no-op (and therefore harmless) for an already-correct 8-char id, and
-     * only matters if that assumption was wrong - can't confirm either
-     * way without live access, so this is cheap insurance either way. */
-    var gameId = rawGameId.length > 8 ? rawGameId.substring(0, 8) : rawGameId;
+    var lines = await lichess.sampleEventStream(null, '/api/stream/game/' + encodeURIComponent(gameId), WATCH_SAMPLE_MS);
+    if (!lines.length) {
+        console.error('watch-game: no stream lines received for ' + gameId);
+        return lichess.sendJson(res, 502, { error: 'watch_game_no_data' });
+    }
 
-    /* `pgnInJson=true` is required here, not optional - without it,
-     * /api/game/export/{id} returns raw PGN text (not JSON) by default,
-     * lichessFetch's JSON.parse on that fails and silently falls back to
-     * { raw: text }, and every field read below then comes back
-     * empty/null - `ok:true` the whole time, since the HTTP call itself
-     * succeeded. This previously ALSO added `moves=true` on top, on the
-     * assumption Lichess would then include a separate bare-SAN `moves`
-     * field - but that combination consistently failed live, while
-     * handleGameState's plain `?pgnInJson=true` (no `moves=true`) call
-     * against this exact same endpoint hasn't been reported broken. Since
-     * this app already has a proven, unit-tested PGN-with-headers parser
-     * (chessEngine.js's replayFullGame, built for Import PGN and My
-     * Games), the safer fix is to stop asking for a separate `moves`
-     * field at all and just parse the full PGN text Lichess already
-     * returns for `pgnInJson=true` - one fewer unverified assumption. */
-    var result = await lichess.lichessFetch(null, '/api/game/export/' + encodeURIComponent(gameId) + '?pgnInJson=true');
-    if (!result.ok) {
-        console.error('watch-game: export failed for ' + gameId + ' (from ' + rawGameId + '): status ' + result.status + ' ' + JSON.stringify(result.data));
-        return lichess.sendJson(res, result.status || 502, { error: 'watch_game_failed', status: result.status, detail: result.data });
+    var fen = null, lastMoveUci = null, uciMoves = null, status = null, winner = null;
+    var whiteInfo = null, blackInfo = null;
+    for (var i = 0; i < lines.length; i++) {
+        var line = lines[i] || {};
+        var state = line.state || line;
+        if (line.fen) { fen = line.fen; }
+        if (line.lm) { lastMoveUci = line.lm; }
+        if (state.moves) { uciMoves = state.moves; }
+        if (line.white) { whiteInfo = line.white; }
+        if (line.black) { blackInfo = line.black; }
+        if (state.status) { status = state.status; }
+        if (state.winner) { winner = state.winner; }
     }
-    var g = result.data || {};
-    if (g.raw !== undefined) {
-        /* lichessFetch's JSON.parse fell back - the response wasn't JSON
-         * at all, so nothing below can be trusted. Report this as a real
-         * failure instead of silently returning an empty/null game. */
-        console.error('watch-game: export for ' + gameId + ' was not JSON: ' + String(g.raw).slice(0, 200));
-        return lichess.sendJson(res, 502, { error: 'watch_game_bad_response' });
-    }
-    var players = g.players || {};
-    var white = players.white || {};
-    var black = players.black || {};
-    /* Same defensive handling as handleGameState: some Lichess API
-     * versions return `status` as a plain string, others as {id, name}. */
-    var statusValue = (g.status && typeof g.status === 'object') ? g.status.name : g.status;
+
     return lichess.sendJson(res, 200, {
-        gameId: g.id || gameId,
-        status: statusValue || null,
-        winner: lichess.normalizeColor(g.winner),
-        white: { name: (white.user && white.user.name) || 'Anonymous', rating: (typeof white.rating === 'number') ? white.rating : null },
-        black: { name: (black.user && black.user.name) || 'Anonymous', rating: (typeof black.rating === 'number') ? black.rating : null },
-        pgn: g.pgn || '',
-        moves: g.moves || '', /* kept as a fallback in case a future response ever includes it directly */
-        speed: g.speed || null,
-        rated: !!g.rated
+        gameId: gameId,
+        fen: fen,
+        lastMove: lastMoveUci,
+        moves: uciMoves || '',
+        white: whiteInfo ? { name: (whiteInfo.name || (whiteInfo.user && whiteInfo.user.name)) || 'Anonymous', rating: whiteInfo.rating || null } : null,
+        black: blackInfo ? { name: (blackInfo.name || (blackInfo.user && blackInfo.user.name)) || 'Anonymous', rating: blackInfo.rating || null } : null,
+        status: status,
+        winner: lichess.normalizeColor(winner),
+        /* TEMPORARY DEBUG: a small sample of the raw lines actually
+         * received, so if fen/moves both come back empty, the real shape
+         * is visible from the Watch Games screen without Vercel log
+         * access. Remove once this endpoint's shape is confirmed. */
+        debugSample: JSON.stringify(lines.slice(0, 2))
     });
 }
 

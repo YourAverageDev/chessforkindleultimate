@@ -598,6 +598,29 @@ var ChessEngine = (function () {
         return null;
     }
 
+    /* Replays a space-separated UCI move list ("e2e4 e7e5 g1f3 ...") from
+     * the start position - the format Lichess's live game streams speak,
+     * as opposed to the SAN movetext replayFullGame handles. Returns every
+     * intermediate position like replayFullGame does, or null if any move
+     * can't be resolved. */
+    function replayUciMoves(uciStr) {
+        var state = createInitialState();
+        var states = [state];
+        var moves = [];
+        var raw = (uciStr || '').replace(/^\s+|\s+$/g, '');
+        if (!raw) { return { states: states, moves: moves }; }
+        var tokens = raw.split(/\s+/);
+        for (var i = 0; i < tokens.length; i++) {
+            var legal = generateLegalMoves(state);
+            var mv = findMoveByUci(legal, tokens[i]);
+            if (!mv) { return null; }
+            state = makeMove(state, mv);
+            states.push(state);
+            moves.push(mv);
+        }
+        return { states: states, moves: moves };
+    }
+
     var api = {
         createInitialState: createInitialState,
         generateLegalMoves: generateLegalMoves,
@@ -619,7 +642,8 @@ var ChessEngine = (function () {
         tokenizePgnMoves: tokenizePgnMoves,
         replayPgnToPly: replayPgnToPly,
         replayFullGame: replayFullGame,
-        findMoveByUci: findMoveByUci
+        findMoveByUci: findMoveByUci,
+        replayUciMoves: replayUciMoves
     };
 
     /* Also usable from Node (api/*.js serverless functions use this same

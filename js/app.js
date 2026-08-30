@@ -1584,19 +1584,6 @@ function renderTvChannelList(channels) {
         setText(metaEl, c.name + (c.rating ? ' (' + c.rating + ')' : ''));
         item.appendChild(metaEl);
 
-        /* TEMPORARY DEBUG: shows Lichess's raw per-channel data so the
-         * true field name for the current game id can be read directly
-         * off this screen - remove once handleTvChannels's `gameId`
-         * assumption is confirmed correct or fixed. */
-        if (c.raw) {
-            var debugEl = document.createElement('div');
-            debugEl.className = 'room-list-meta';
-            debugEl.style.wordBreak = 'break-all';
-            debugEl.style.fontSize = '10px';
-            setText(debugEl, c.raw);
-            item.appendChild(debugEl);
-        }
-
         var watchBtn = document.createElement('a');
         watchBtn.href = 'javascript:void(0)';
         watchBtn.className = 'room-list-join-btn';
@@ -1671,23 +1658,49 @@ function onWatchGameUpdate(err, data) {
     }
     watchPollFailCount = 0;
 
-    /* Prefer the full PGN text (parsed with the same header-aware parser
-     * already used for Import PGN/My Games) over a separate bare-moves
-     * field - see api/lichess/[action].js's handleWatchGame for why. */
-    var movetext = (data.pgn && data.pgn.length) ? data.pgn : (data.moves || '');
-    var replay = ChessEngine.replayFullGame(movetext);
-    if (replay) {
-        currentState = replay.states[replay.states.length - 1];
-        var lastMv = replay.moves.length ? replay.moves[replay.moves.length - 1] : null;
-        lastMove = lastMv ? { from: lastMv.from, to: lastMv.to } : null;
-        selectedSquare = null;
-        recomputeLegalMoves();
-        updateBoardDisplay();
+    /* handleWatchGame now samples Lichess's public spectator stream
+     * (/api/stream/game/{id}), whose exact per-line shape couldn't be
+     * confirmed without live access - it may hand back a flat `fen`, or a
+     * Board-API-style UCI `moves` list, or (if this guess is still wrong)
+     * neither. Try the most direct one first, fall back to the other, and
+     * if both come up empty, show the debug sample the server included so
+     * the real shape is visible right here instead of another blind
+     * round. */
+    var applied = false;
+    if (data.fen && data.fen.indexOf('/') > 0) {
+        var fenState = ChessEngine.stateFromFen(data.fen);
+        if (fenState && fenState.board) {
+            currentState = fenState;
+            lastMove = data.lastMove ? ChessEngine.uciToMove(data.lastMove) : null;
+            selectedSquare = null;
+            recomputeLegalMoves();
+            updateBoardDisplay();
+            applied = true;
+        }
+    }
+    if (!applied && data.moves) {
+        var replay = ChessEngine.replayUciMoves(data.moves);
+        if (replay) {
+            currentState = replay.states[replay.states.length - 1];
+            var lastMv = replay.moves.length ? replay.moves[replay.moves.length - 1] : null;
+            lastMove = lastMv ? { from: lastMv.from, to: lastMv.to } : null;
+            selectedSquare = null;
+            recomputeLegalMoves();
+            updateBoardDisplay();
+            applied = true;
+        }
     }
 
-    var whiteText = (data.white ? data.white.name : '?') + (data.white && data.white.rating ? ' (' + data.white.rating + ')' : '');
-    var blackText = (data.black ? data.black.name : '?') + (data.black && data.black.rating ? ' (' + data.black.rating + ')' : '');
-    setText(document.getElementById('puzzle-info'), whiteText + ' vs ' + blackText);
+    var infoText;
+    if (data.white || data.black) {
+        var whiteText = (data.white ? data.white.name : '?') + (data.white && data.white.rating ? ' (' + data.white.rating + ')' : '');
+        var blackText = (data.black ? data.black.name : '?') + (data.black && data.black.rating ? ' (' + data.black.rating + ')' : '');
+        infoText = whiteText + ' vs ' + blackText;
+    } else {
+        infoText = 'Watching live';
+    }
+    if (!applied && data.debugSample) { infoText += ' | ' + data.debugSample; }
+    setText(document.getElementById('puzzle-info'), infoText);
 
     if (data.status && data.status !== 'started' && data.status !== 'created') {
         if (!gameOver) {

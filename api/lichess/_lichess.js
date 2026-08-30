@@ -314,8 +314,10 @@ async function sampleEventStream(accessToken, path, maxMs) {
     var timer = setTimeout(function () { controller.abort(); }, maxMs);
     var events = [];
     try {
+        var headers = {};
+        if (accessToken) { headers.Authorization = 'Bearer ' + accessToken; } /* public streams (e.g. spectating) need no token at all */
         var res = await fetch(LICHESS_BASE + path, {
-            headers: { Authorization: 'Bearer ' + accessToken },
+            headers: headers,
             signal: controller.signal
         });
         if (!res.body || !res.body.getReader) { return events; }
