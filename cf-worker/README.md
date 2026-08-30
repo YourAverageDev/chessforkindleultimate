@@ -78,6 +78,17 @@ production rate limits) - that only shows up once you deploy for real.
 
 ## Deploying
 
+**Every command below must be run with `cf-worker/` (the directory this
+README is in) as your current directory** - that's where `wrangler.toml`
+lives, and it's the only thing that tells wrangler "this is a Worker with
+Durable Objects," not a static site. Run `cd cf-worker` again before ANY
+step below if you closed your terminal, opened a new one, or aren't sure
+- it's harmless to repeat. If you skip it, `wrangler deploy` can't find a
+config, falls back to guessing you want a static-site deploy instead, and
+fails with an error like `Could not detect a directory containing static
+files` - that error means "wrong directory," not a real problem with this
+setup.
+
 1. **Install wrangler** (Cloudflare's CLI) if you don't have it:
    ```
    npm install -g wrangler
@@ -95,7 +106,8 @@ production rate limits) - that only shows up once you deploy for real.
    (what `wrangler.toml` requests via `new_sqlite_classes`) are available
    on Workers' free plan.
 
-3. **Deploy:**
+3. **Deploy** (make sure you're still in `cf-worker/` - `cd cf-worker`
+   again if this is a new terminal window/tab):
    ```
    npx wrangler deploy
    ```
