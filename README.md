@@ -86,9 +86,9 @@ api/state.js          GET  - polled by both clients for the room's current move 
 api/cancel-room.js    POST - lets the creator delete a room that's still waiting for an opponent
 api/list-public-rooms.js  GET - lists open public rooms for the "Public Server Play" lobby
 api/uc/_uc.js             Shared helpers for Ultimate Chess Matchmaking (queue + game room logic)
-api/uc/[...path].js       All six Ultimate Chess Matchmaking endpoints (queue/join, queue/status,
-                          queue/cancel, game/state, game/move, game/resign) in one dynamic route -
-                          see its own header comment for why (Vercel's 12-function Hobby cap)
+api/uc/queue/[action].js  join/status/cancel folded into one dynamic route (Vercel's 12-function
+                          Hobby cap - same fix as api/lichess/[action].js already uses)
+api/uc/game/[action].js   state/move/resign folded into one dynamic route, same reasoning
 api/lichess/_lichess.js          Shared helpers: OAuth token exchange, session storage, Lichess API proxy
 api/lichess/oauth-exchange.js    POST - completes login, returns our session token
 api/lichess/me.js                GET  - current Lichess username + ratings

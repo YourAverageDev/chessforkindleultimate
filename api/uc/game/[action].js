@@ -1,47 +1,10 @@
-var uc = require('./_uc.js');
+var uc = require('../_uc.js');
 
-/* Vercel's Hobby plan caps a deployment at 12 Serverless Functions - the
- * same limit api/lichess/[action].js already ran into and solved the same
- * way (see that file's own comment). Ultimate Chess Matchmaking's six
- * endpoints (queue/join, queue/status, queue/cancel, game/state,
- * game/move, game/resign) used to be six separate files, which alone
- * pushed the total over 12 once combined with everything else. This one
- * catch-all route (`[...path].js` matches /api/uc/<anything>/<anything>)
- * folds all of them into a single function, dispatching on the path
- * segments - the client's URLs (js/ultimateChess.js) are unchanged, since
- * /api/uc/queue/join etc. still resolve to this same file. */
+/* Same reasoning as api/uc/queue/[action].js: one dynamic route folding
+ * state/move/resign into a single function to stay under Vercel's
+ * 12-function Hobby cap. Client URLs are unchanged. */
 
-async function handleQueueJoin(req, res) {
-    if (req.method !== 'POST') { return uc.sendJson(res, 405, { error: 'method_not_allowed' }); }
-    var body = await uc.readJsonBody(req);
-    var playerId = (body.playerId || '').toString();
-    var timeControlSec = parseInt(body.timeControlSec, 10);
-    var incrementSec = parseInt(body.incrementSec, 10);
-    if (!playerId || isNaN(timeControlSec) || isNaN(incrementSec)) {
-        return uc.sendJson(res, 400, { error: 'bad_request' });
-    }
-    var result = await uc.joinQueue(playerId, timeControlSec, incrementSec);
-    return uc.sendJson(res, 200, result);
-}
-
-async function handleQueueStatus(req, res) {
-    if (req.method !== 'GET') { return uc.sendJson(res, 405, { error: 'method_not_allowed' }); }
-    var ticketId = (req.query && req.query.ticketId || '').toString();
-    if (!ticketId) { return uc.sendJson(res, 400, { error: 'missing_ticket_id' }); }
-    var result = await uc.pollStatus(ticketId);
-    return uc.sendJson(res, 200, result);
-}
-
-async function handleQueueCancel(req, res) {
-    if (req.method !== 'POST') { return uc.sendJson(res, 405, { error: 'method_not_allowed' }); }
-    var body = await uc.readJsonBody(req);
-    var ticketId = (body.ticketId || '').toString();
-    if (!ticketId) { return uc.sendJson(res, 400, { error: 'missing_ticket_id' }); }
-    var result = await uc.cancelQueue(ticketId);
-    return uc.sendJson(res, 200, result);
-}
-
-async function handleGameState(req, res) {
+async function handleState(req, res) {
     if (req.method !== 'GET') { return uc.sendJson(res, 405, { error: 'method_not_allowed' }); }
     var gameId = (req.query && req.query.gameId || '').toString();
     var playerId = (req.query && req.query.playerId || '').toString();
@@ -54,7 +17,7 @@ async function handleGameState(req, res) {
     return uc.sendJson(res, 200, uc.publicState(game, playerId));
 }
 
-async function handleGameMove(req, res) {
+async function handleMove(req, res) {
     if (req.method !== 'POST') { return uc.sendJson(res, 405, { error: 'method_not_allowed' }); }
     var body = await uc.readJsonBody(req);
     var gameId = (body.gameId || '').toString();
@@ -87,7 +50,7 @@ async function handleGameMove(req, res) {
     return uc.sendJson(res, 200, { ok: true, state: uc.publicState(game, playerId) });
 }
 
-async function handleGameResign(req, res) {
+async function handleResign(req, res) {
     if (req.method !== 'POST') { return uc.sendJson(res, 405, { error: 'method_not_allowed' }); }
     var body = await uc.readJsonBody(req);
     var gameId = (body.gameId || '').toString();
@@ -106,20 +69,16 @@ async function handleGameResign(req, res) {
     return uc.sendJson(res, 200, { ok: true, state: uc.publicState(game, playerId) });
 }
 
-var ROUTES = {
-    'queue/join': handleQueueJoin,
-    'queue/status': handleQueueStatus,
-    'queue/cancel': handleQueueCancel,
-    'game/state': handleGameState,
-    'game/move': handleGameMove,
-    'game/resign': handleGameResign
+var ACTIONS = {
+    state: handleState,
+    move: handleMove,
+    resign: handleResign
 };
 
 module.exports = async function handler(req, res) {
-    var segments = (req.query && req.query.path) || [];
-    var route = segments.join('/');
-    var fn = ROUTES.hasOwnProperty(route) ? ROUTES[route] : null;
-    if (!fn) { return uc.sendJson(res, 404, { error: 'not_found' }); }
+    var action = req.query && req.query.action;
+    var fn = ACTIONS.hasOwnProperty(action) ? ACTIONS[action] : null;
+    if (!fn) { return uc.sendJson(res, 404, { error: 'unknown_action' }); }
 
     try {
         return await fn(req, res);
