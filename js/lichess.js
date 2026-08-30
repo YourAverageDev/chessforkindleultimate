@@ -297,6 +297,24 @@ var LichessClient = (function () {
         request('GET', '/api/lichess/my-games', sessionToken, null, callback);
     }
 
+    /* Watch Games (TV) and Position Analysis are both public - no session
+     * needed, same as the puzzle endpoints. */
+    function fetchTvChannels(callback) {
+        request('GET', '/api/lichess/tv-channels', null, null, callback);
+    }
+
+    function fetchWatchGame(gameId, callback) {
+        request('GET', '/api/lichess/watch-game?gameId=' + encodeURIComponent(gameId), null, null, callback);
+    }
+
+    function fetchExplorer(fen, db, callback) {
+        request('GET', '/api/lichess/explorer?fen=' + encodeURIComponent(fen) + '&db=' + encodeURIComponent(db || 'lichess'), null, null, callback);
+    }
+
+    function fetchTablebase(fen, callback) {
+        request('GET', '/api/lichess/tablebase?fen=' + encodeURIComponent(fen), null, null, callback);
+    }
+
     return {
         startLogin: startLogin,
         handleOAuthCallback: handleOAuthCallback,
@@ -314,6 +332,10 @@ var LichessClient = (function () {
         pollEvents: pollEvents,
         fetchDailyPuzzle: fetchDailyPuzzle,
         fetchNextPuzzle: fetchNextPuzzle,
-        fetchMyGames: fetchMyGames
+        fetchMyGames: fetchMyGames,
+        fetchTvChannels: fetchTvChannels,
+        fetchWatchGame: fetchWatchGame,
+        fetchExplorer: fetchExplorer,
+        fetchTablebase: fetchTablebase
     };
 })();

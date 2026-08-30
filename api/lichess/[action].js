@@ -56,7 +56,9 @@ async function handleMe(req, res) {
 
     return lichess.sendJson(res, 200, {
         username: accountRes.data.username,
-        perfs: accountRes.data.perfs || {}
+        perfs: accountRes.data.perfs || {},
+        count: accountRes.data.count || null,
+        createdAt: accountRes.data.createdAt || null
     });
 }
 
@@ -428,6 +430,125 @@ async function handleMyGames(req, res) {
     return lichess.sendJson(res, 200, { games: games });
 }
 
+/* Watch Games (TV): both of these are public, unauthenticated Lichess
+ * endpoints - no session needed, same as the puzzle actions. */
+
+async function handleTvChannels(req, res) {
+    if (req.method !== 'GET') { return lichess.sendJson(res, 405, { error: 'method_not_allowed' }); }
+    var result = await lichess.lichessFetch(null, '/api/tv/channels');
+    if (!result.ok) {
+        return lichess.sendJson(res, result.status || 502, { error: 'tv_channels_fetch_failed', detail: result.data });
+    }
+    var data = result.data || {};
+    var channels = [];
+    for (var key in data) {
+        if (!data.hasOwnProperty(key)) { continue; }
+        var c = data[key];
+        if (!c || !c.gameId) { continue; }
+        channels.push({
+            channel: key,
+            name: (c.user && c.user.name) || 'Unknown',
+            rating: (typeof c.rating === 'number') ? c.rating : null,
+            gameId: c.gameId
+        });
+    }
+    return lichess.sendJson(res, 200, { channels: channels });
+}
+
+/* Spectating re-polls a plain game export on every tick rather than
+ * holding any kind of stream open - consistent with the rest of this
+ * app's polling-only architecture, and much simpler than trying to sample
+ * a spectator move stream (there's a public one - /api/stream/game/{id} -
+ * but this app's author couldn't confirm its exact line shape without
+ * live access, whereas /api/game/export/{id} is the same endpoint
+ * game-state's own finished-game fallback already uses). */
+async function handleWatchGame(req, res) {
+    if (req.method !== 'GET') { return lichess.sendJson(res, 405, { error: 'method_not_allowed' }); }
+    var gameId = (req.query && req.query.gameId || '').toString();
+    if (!gameId) { return lichess.sendJson(res, 400, { error: 'missing_game_id' }); }
+
+    var result = await lichess.lichessFetch(null, '/api/game/export/' + encodeURIComponent(gameId) + '?moves=true');
+    if (!result.ok) {
+        return lichess.sendJson(res, result.status || 502, { error: 'watch_game_failed', detail: result.data });
+    }
+    var g = result.data || {};
+    var players = g.players || {};
+    var white = players.white || {};
+    var black = players.black || {};
+    return lichess.sendJson(res, 200, {
+        gameId: g.id || gameId,
+        status: g.status || null,
+        winner: lichess.normalizeColor(g.winner),
+        white: { name: (white.user && white.user.name) || 'Anonymous', rating: (typeof white.rating === 'number') ? white.rating : null },
+        black: { name: (black.user && black.user.name) || 'Anonymous', rating: (typeof black.rating === 'number') ? black.rating : null },
+        moves: g.moves || '',
+        speed: g.speed || null,
+        rated: !!g.rated
+    });
+}
+
+/* Position Analysis: Opening Explorer (aggregated stats from real games at
+ * this exact position) and the tablebase (perfect play once few enough
+ * pieces remain). Both are public reads on their own hosts - see
+ * _lichess.js's externalFetch. Field names below are, as ever in this
+ * file, this app's best-effort reading of Lichess's docs rather than
+ * something checked live. */
+async function handleExplorer(req, res) {
+    if (req.method !== 'GET') { return lichess.sendJson(res, 405, { error: 'method_not_allowed' }); }
+    var fen = (req.query && req.query.fen || '').toString();
+    if (!fen) { return lichess.sendJson(res, 400, { error: 'missing_fen' }); }
+    var db = (req.query && req.query.db === 'masters') ? 'master' : 'lichess';
+    var url = 'https://explorer.lichess.ovh/' + db + '?fen=' + encodeURIComponent(fen) + '&variant=standard';
+
+    var result = await lichess.externalFetch(url);
+    if (!result.ok || !result.data) {
+        return lichess.sendJson(res, result.status || 502, { error: 'explorer_fetch_failed' });
+    }
+    var data = result.data;
+    var moves = [];
+    var rawMoves = data.moves || [];
+    for (var i = 0; i < rawMoves.length; i++) {
+        var m = rawMoves[i];
+        moves.push({ uci: m.uci, san: m.san, white: m.white || 0, draws: m.draws || 0, black: m.black || 0 });
+    }
+    return lichess.sendJson(res, 200, {
+        white: data.white || 0,
+        draws: data.draws || 0,
+        black: data.black || 0,
+        opening: data.opening || null,
+        moves: moves
+    });
+}
+
+async function handleTablebase(req, res) {
+    if (req.method !== 'GET') { return lichess.sendJson(res, 405, { error: 'method_not_allowed' }); }
+    var fen = (req.query && req.query.fen || '').toString();
+    if (!fen) { return lichess.sendJson(res, 400, { error: 'missing_fen' }); }
+    var url = 'https://tablebase.lichess.ovh/standard?fen=' + encodeURIComponent(fen);
+
+    var result = await lichess.externalFetch(url);
+    if (!result.ok || !result.data) {
+        /* Too many pieces on the board (outside tablebase range) is the
+         * common, expected case here, not a real failure - just report
+         * "nothing available" rather than an error. */
+        return lichess.sendJson(res, 200, { available: false });
+    }
+    var data = result.data;
+    var rawMoves = (data.moves || []).slice(0, 6);
+    var moves = [];
+    for (var i = 0; i < rawMoves.length; i++) {
+        var m = rawMoves[i];
+        moves.push({ uci: m.uci, san: m.san, category: m.category || null, dtz: (typeof m.dtz === 'number') ? m.dtz : null });
+    }
+    return lichess.sendJson(res, 200, {
+        available: true,
+        category: data.category || null,
+        dtz: (typeof data.dtz === 'number') ? data.dtz : null,
+        dtm: (typeof data.dtm === 'number') ? data.dtm : null,
+        moves: moves
+    });
+}
+
 var ACTIONS = {
     'oauth-exchange': handleOauthExchange,
     'me': handleMe,
@@ -442,7 +563,11 @@ var ACTIONS = {
     'poll-events': handlePollEvents,
     'puzzle-daily': handlePuzzleDaily,
     'puzzle-next': handlePuzzleNext,
-    'my-games': handleMyGames
+    'my-games': handleMyGames,
+    'tv-channels': handleTvChannels,
+    'watch-game': handleWatchGame,
+    'explorer': handleExplorer,
+    'tablebase': handleTablebase
 };
 
 module.exports = async function handler(req, res) {

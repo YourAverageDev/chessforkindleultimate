@@ -196,6 +196,19 @@ async function lichessFetchNdjson(accessToken, path) {
     return { ok: res.ok, status: res.status, lines: lines };
 }
 
+/* Position Analysis (Opening Explorer / tablebase) talks to two entirely
+ * different hosts than the rest of this file - explorer.lichess.ovh and
+ * tablebase.lichess.ovh, not lichess.org - and neither needs auth. This is
+ * a plain unauthenticated JSON GET against an arbitrary full URL, unlike
+ * lichessFetch (always lichess.org, always Bearer-token-shaped). */
+async function externalFetch(url) {
+    var res = await fetch(url);
+    var text = await res.text();
+    var data = null;
+    try { data = text ? JSON.parse(text) : {}; } catch (e) { data = null; }
+    return { ok: res.ok, status: res.status, data: data };
+}
+
 async function readJsonBody(req) {
     if (req.body && typeof req.body === 'object') { return req.body; }
     if (typeof req.body === 'string' && req.body.length) {
@@ -237,6 +250,7 @@ module.exports = {
     exchangeCodeForToken: exchangeCodeForToken,
     lichessFetch: lichessFetch,
     lichessFetchNdjson: lichessFetchNdjson,
+    externalFetch: externalFetch,
     sampleEventStream: sampleEventStream,
     formEncode: formEncode,
     readJsonBody: readJsonBody,

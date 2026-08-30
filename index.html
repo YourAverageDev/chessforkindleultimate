@@ -24,6 +24,7 @@
         <div class="menu-buttons">
             <a href="javascript:void(0)" class="big-btn" id="btn-play-lichess">Play Lichess</a>
             <a href="javascript:void(0)" class="big-btn" id="btn-puzzles">Puzzles</a>
+            <a href="javascript:void(0)" class="big-btn" id="btn-watch-games">Watch Games</a>
             <a href="javascript:void(0)" class="big-btn" id="btn-local-rooms">Local Rooms</a>
         </div>
         <p class="hint">Tap a piece, then tap where it should go.</p>
@@ -67,6 +68,7 @@
             <a href="javascript:void(0)" class="big-btn" id="btn-lichess-incoming">Incoming Challenges<span id="lichess-incoming-badge"></span></a>
             <a href="javascript:void(0)" class="big-btn" id="btn-lichess-my-games">My Games</a>
             <a href="javascript:void(0)" class="big-btn" id="btn-lichess-import-pgn">Import PGN</a>
+            <a href="javascript:void(0)" class="big-btn" id="btn-lichess-profile">Profile</a>
         </div>
         <p class="error-text" id="lichess-menu-error"></p>
         <a href="javascript:void(0)" class="text-link" id="btn-lichess-logout">Log Out</a>
@@ -179,6 +181,37 @@
         </div>
         <p class="hint" id="pgn-copy-status"></p>
         <a href="javascript:void(0)" class="text-link" id="btn-pgn-view-back">&laquo; Back</a>
+    </div>
+</div>
+
+<!-- WATCH GAMES: TV CHANNEL LIST -->
+<div id="tv-list-screen" class="screen" style="display:none;">
+    <div class="splash-inner">
+        <h2>Watch Games</h2>
+        <p class="hint">Spectate the current top game on each Lichess speed/mode. No login needed.</p>
+        <div class="room-list" id="tv-channel-list"></div>
+        <p class="hint" id="tv-list-empty" style="display:none;">No live games found right now.</p>
+        <p class="error-text" id="tv-list-error"></p>
+        <a href="javascript:void(0)" class="text-link" id="btn-tv-list-back">&laquo; Back</a>
+    </div>
+</div>
+
+<!-- LICHESS: PROFILE -->
+<div id="lichess-profile-screen" class="screen" style="display:none;">
+    <div class="splash-inner">
+        <div id="lichess-profile-content"></div>
+        <p class="error-text" id="lichess-profile-error"></p>
+        <a href="javascript:void(0)" class="text-link" id="btn-lichess-profile-back">&laquo; Back</a>
+    </div>
+</div>
+
+<!-- POSITION ANALYSIS (opening explorer / tablebase) -->
+<div id="lichess-analysis-screen" class="screen" style="display:none;">
+    <div class="splash-inner">
+        <h2>Position Analysis</h2>
+        <div id="analysis-content"></div>
+        <p class="error-text" id="lichess-analysis-error"></p>
+        <a href="javascript:void(0)" class="text-link" id="btn-analysis-back">&laquo; Back</a>
     </div>
 </div>
 
@@ -307,6 +340,7 @@
         <a href="javascript:void(0)" class="ctrl-btn" id="btn-undo">Undo</a>
         <a href="javascript:void(0)" class="ctrl-btn" id="btn-resign" style="display:none;">Resign</a>
         <a href="javascript:void(0)" class="ctrl-btn" id="btn-draw" style="display:none;">Offer/Accept Draw</a>
+        <a href="javascript:void(0)" class="ctrl-btn" id="btn-watch-stop" style="display:none;">Stop Watching</a>
         <a href="javascript:void(0)" class="ctrl-btn" id="btn-flip">Flip</a>
         <a href="javascript:void(0)" class="ctrl-btn" id="btn-menu">Menu</a>
         <div id="replay-controls" style="display:none;">
@@ -314,6 +348,7 @@
             <a href="javascript:void(0)" class="ctrl-btn" id="btn-replay-prev">&laquo; Prev</a>
             <a href="javascript:void(0)" class="ctrl-btn" id="btn-replay-next">Next &raquo;</a>
             <a href="javascript:void(0)" class="ctrl-btn" id="btn-replay-last">&raquo;|</a>
+            <a href="javascript:void(0)" class="ctrl-btn" id="btn-replay-analyze">Analyze</a>
             <a href="javascript:void(0)" class="ctrl-btn" id="btn-replay-pgn">View PGN</a>
             <a href="javascript:void(0)" class="ctrl-btn" id="btn-replay-back">Back to List</a>
         </div>

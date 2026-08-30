@@ -106,6 +106,11 @@ var replayIndex = 0;
 var replayPgnText = '';
 var replayReturnScreen = 'splash';
 
+/* Watch Games (TV) state - re-polls a plain game export every tick rather
+ * than holding a stream open (see api/lichess/[action].js's handleWatchGame
+ * for why), consistent with this app's polling-only architecture. */
+var watchGameId = null;
+
 function setText(el, str) {
     if (el.textContent !== undefined) { el.textContent = str; }
     else { el.innerText = str; }
@@ -117,6 +122,7 @@ var ALL_SCREENS = [
     'lichess-login', 'lichess-menu', 'lichess-challenge', 'lichess-waiting', 'lichess-incoming',
     'puzzle-menu',
     'lichess-my-games', 'lichess-import-pgn', 'lichess-game-pgn',
+    'tv-list', 'lichess-profile', 'lichess-analysis',
     'game'
 ];
 
@@ -314,6 +320,8 @@ function updateStatusText(status) {
         text = 'Find the best move for ' + turnName + checkSuffix;
     } else if (mode === 'replay') {
         text = 'Move ' + replayIndex + ' of ' + (replayStates.length - 1) + checkSuffix;
+    } else if (mode === 'watch') {
+        text = 'Watching live';
     } else if (status === 'check') {
         text = turnName + ' to move — Check!';
     } else {
@@ -415,7 +423,7 @@ function pickPromotion(pieceType) {
 
 function onSquareClick(idx) {
     if (gameOver) { return; }
-    if (mode === 'replay') { return; }
+    if (mode === 'replay' || mode === 'watch') { return; }
     if (mode === 'ai' && currentState.turn === aiColor) { return; }
     if (mode === 'online' && currentState.turn !== onlineColor) { return; }
     if (mode === 'lichess' && (currentState.turn !== lichessColor || lichessMoveInFlight)) { return; }
@@ -451,11 +459,13 @@ function applyModeControlVisibility() {
     var isLichess = (mode === 'lichess');
     var isPuzzle = (mode === 'puzzle');
     var isReplay = (mode === 'replay');
-    document.getElementById('btn-new').style.display = (isOnline || isLichess || isPuzzle || isReplay) ? 'none' : 'inline-block';
-    document.getElementById('btn-undo').style.display = (isOnline || isLichess || isPuzzle || isReplay) ? 'none' : 'inline-block';
+    var isWatch = (mode === 'watch');
+    document.getElementById('btn-new').style.display = (isOnline || isLichess || isPuzzle || isReplay || isWatch) ? 'none' : 'inline-block';
+    document.getElementById('btn-undo').style.display = (isOnline || isLichess || isPuzzle || isReplay || isWatch) ? 'none' : 'inline-block';
     document.getElementById('btn-resign').style.display = isLichess ? 'inline-block' : 'none';
     document.getElementById('btn-draw').style.display = isLichess ? 'inline-block' : 'none';
     document.getElementById('replay-controls').style.display = isReplay ? 'block' : 'none';
+    document.getElementById('btn-watch-stop').style.display = isWatch ? 'inline-block' : 'none';
 }
 
 function startGame(selectedMode, level) {
@@ -1501,8 +1511,257 @@ function copyPgnText() {
     setMessage('pgn-copy-status', ok ? 'Copied!' : 'Text selected — copy it manually.');
 }
 
+/* ---- watch games (TV) ---- */
+
+function openTvChannelsScreen() {
+    setMessage('tv-list-error', '');
+    document.getElementById('tv-channel-list').innerHTML = '';
+    document.getElementById('tv-list-empty').style.display = 'none';
+    showScreen('tv-list');
+    LichessClient.fetchTvChannels(function (err, data) {
+        if (err || !data) { setMessage('tv-list-error', formatLichessError(err)); return; }
+        renderTvChannelList(data.channels || []);
+    });
+}
+
+var tvChannelsCache = [];
+
+function renderTvChannelList(channels) {
+    tvChannelsCache = channels;
+    var container = document.getElementById('tv-channel-list');
+    var emptyMsg = document.getElementById('tv-list-empty');
+    container.innerHTML = '';
+
+    if (channels.length === 0) {
+        emptyMsg.style.display = 'block';
+        return;
+    }
+    emptyMsg.style.display = 'none';
+
+    for (var i = 0; i < channels.length; i++) {
+        var c = channels[i];
+        var item = document.createElement('div');
+        item.className = 'room-list-item';
+
+        var nameEl = document.createElement('div');
+        nameEl.className = 'room-list-code';
+        setText(nameEl, c.channel);
+        item.appendChild(nameEl);
+
+        var metaEl = document.createElement('div');
+        metaEl.className = 'room-list-meta';
+        setText(metaEl, c.name + (c.rating ? ' (' + c.rating + ')' : ''));
+        item.appendChild(metaEl);
+
+        var watchBtn = document.createElement('a');
+        watchBtn.href = 'javascript:void(0)';
+        watchBtn.className = 'room-list-join-btn';
+        setText(watchBtn, 'Watch');
+        watchBtn.setAttribute('onclick', 'beginWatchGame(\'' + c.gameId + '\')');
+        item.appendChild(watchBtn);
+
+        container.appendChild(item);
+    }
+}
+
+function beginWatchGame(gameId) {
+    mode = 'watch';
+    watchGameId = gameId;
+    gameOver = false;
+    selectedSquare = null;
+    flipped = false;
+    lastMove = null;
+    currentState = ChessEngine.createInitialState();
+    recomputeLegalMoves();
+    buildBoardTable();
+    updateBoardDisplay();
+    applyModeControlVisibility();
+    document.getElementById('lichess-clock').style.display = 'none';
+    document.getElementById('chess-clocks').style.display = 'none';
+    var infoBox = document.getElementById('puzzle-info');
+    setText(infoBox, 'Loading game…');
+    infoBox.style.display = 'block';
+    setText(document.getElementById('status-text'), 'Watching live');
+    showScreen('game');
+    sizeBoard();
+    OnlineClient.startPolling(function (cb) { LichessClient.fetchWatchGame(watchGameId, cb); }, 3000, onWatchGameUpdate);
+}
+
+function onWatchGameUpdate(err, data) {
+    if (err || !data) { return; } /* transient poll failure - just wait for the next tick */
+
+    var replay = ChessEngine.replayFullGame(data.moves || '');
+    if (replay) {
+        currentState = replay.states[replay.states.length - 1];
+        var lastMv = replay.moves.length ? replay.moves[replay.moves.length - 1] : null;
+        lastMove = lastMv ? { from: lastMv.from, to: lastMv.to } : null;
+        selectedSquare = null;
+        recomputeLegalMoves();
+        updateBoardDisplay();
+    }
+
+    var whiteText = (data.white ? data.white.name : '?') + (data.white && data.white.rating ? ' (' + data.white.rating + ')' : '');
+    var blackText = (data.black ? data.black.name : '?') + (data.black && data.black.rating ? ' (' + data.black.rating + ')' : '');
+    setText(document.getElementById('puzzle-info'), whiteText + ' vs ' + blackText);
+
+    if (data.status && data.status !== 'started' && data.status !== 'created') {
+        if (!gameOver) {
+            gameOver = true;
+            OnlineClient.stopPolling();
+            showGameOver('This game has ended.');
+        }
+        return;
+    }
+
+    setText(document.getElementById('status-text'), 'Watching live — ' + (currentState.turn === 'w' ? 'White' : 'Black') + ' to move');
+}
+
+function stopWatchingGame() {
+    OnlineClient.stopPolling();
+    watchGameId = null;
+    showScreen('tv-list');
+}
+
+/* ---- profile ---- */
+
+var PERF_LABELS = {
+    bullet: 'Bullet', blitz: 'Blitz', rapid: 'Rapid', classical: 'Classical',
+    correspondence: 'Correspondence', chess960: 'Chess960', kingOfTheHill: 'King of the Hill',
+    threeCheck: 'Three-check', antichess: 'Antichess', atomic: 'Atomic', horde: 'Horde',
+    racingKings: 'Racing Kings', crazyhouse: 'Crazyhouse', puzzle: 'Puzzles'
+};
+
+function openLichessProfile() {
+    setMessage('lichess-profile-error', '');
+    document.getElementById('lichess-profile-content').innerHTML = '';
+    showScreen('lichess-profile');
+    LichessClient.fetchMe(lichessSessionToken(), function (err, data) {
+        if (err || !data) { setMessage('lichess-profile-error', formatLichessError(err)); return; }
+        renderLichessProfile(data);
+    });
+}
+
+function renderLichessProfile(data) {
+    var container = document.getElementById('lichess-profile-content');
+    container.innerHTML = '';
+
+    var nameEl = document.createElement('h2');
+    setText(nameEl, data.username);
+    container.appendChild(nameEl);
+
+    if (data.count) {
+        var countEl = document.createElement('p');
+        countEl.className = 'hint';
+        setText(countEl, data.count.all + ' games played · ' + data.count.win + 'W / ' + data.count.loss + 'L / ' + data.count.draw + 'D');
+        container.appendChild(countEl);
+    }
+
+    var perfs = data.perfs || {};
+    for (var key in PERF_LABELS) {
+        if (!PERF_LABELS.hasOwnProperty(key)) { continue; }
+        var p = perfs[key];
+        if (!p || typeof p.rating !== 'number') { continue; }
+
+        var row = document.createElement('div');
+        row.className = 'room-list-item';
+
+        var label = document.createElement('div');
+        label.className = 'room-list-code';
+        setText(label, PERF_LABELS[key] + ': ' + p.rating + (p.prov ? '?' : ''));
+        row.appendChild(label);
+
+        var meta = document.createElement('div');
+        meta.className = 'room-list-meta';
+        setText(meta, (p.games || 0) + ' games played');
+        row.appendChild(meta);
+
+        container.appendChild(row);
+    }
+}
+
+/* ---- position analysis (opening explorer / tablebase) ---- */
+
+function openAnalysisScreen() {
+    var fen = ChessEngine.stateToFen(currentState);
+    setMessage('lichess-analysis-error', '');
+    document.getElementById('analysis-content').innerHTML = 'Loading…';
+    showScreen('lichess-analysis');
+    LichessClient.fetchExplorer(fen, 'lichess', function (err, data) {
+        renderAnalysis(err, data, fen);
+    });
+}
+
+function renderAnalysis(err, data, fen) {
+    var container = document.getElementById('analysis-content');
+    container.innerHTML = '';
+
+    if (err || !data) {
+        setMessage('lichess-analysis-error', formatLichessError(err));
+        return;
+    }
+
+    var total = (data.white || 0) + (data.draws || 0) + (data.black || 0);
+    var summary = document.createElement('p');
+    summary.className = 'hint';
+    if (total > 0) {
+        var wp = Math.round((data.white / total) * 100);
+        var dp = Math.round((data.draws / total) * 100);
+        var bp = 100 - wp - dp;
+        setText(summary, total + ' database games — White ' + wp + '% / Draw ' + dp + '% / Black ' + bp + '%');
+    } else {
+        setText(summary, 'No database games found for this exact position.');
+    }
+    container.appendChild(summary);
+
+    var moves = data.moves || [];
+    for (var i = 0; i < moves.length && i < 10; i++) {
+        var m = moves[i];
+        var mTotal = (m.white || 0) + (m.draws || 0) + (m.black || 0);
+        var row = document.createElement('div');
+        row.className = 'room-list-item';
+
+        var label = document.createElement('div');
+        label.className = 'room-list-code';
+        setText(label, m.san);
+        row.appendChild(label);
+
+        var meta = document.createElement('div');
+        meta.className = 'room-list-meta';
+        var pct = mTotal > 0 ? (' · W ' + Math.round(m.white / mTotal * 100) + '% D ' + Math.round(m.draws / mTotal * 100) + '% B ' + Math.round(m.black / mTotal * 100) + '%') : '';
+        setText(meta, mTotal + ' games' + pct);
+        row.appendChild(meta);
+
+        container.appendChild(row);
+    }
+
+    LichessClient.fetchTablebase(fen, function (err2, tbData) {
+        if (err2 || !tbData || !tbData.available) { return; }
+
+        var tbHeader = document.createElement('h3');
+        setText(tbHeader, 'Tablebase (perfect play)');
+        container.appendChild(tbHeader);
+
+        var catText = document.createElement('p');
+        catText.className = 'hint';
+        setText(catText, 'Result: ' + (tbData.category || 'unknown') + (typeof tbData.dtz === 'number' ? ' (DTZ ' + tbData.dtz + ')' : ''));
+        container.appendChild(catText);
+
+        var tbMoves = tbData.moves || [];
+        for (var j = 0; j < tbMoves.length; j++) {
+            var tm = tbMoves[j];
+            var trow = document.createElement('div');
+            trow.className = 'room-list-item';
+            var tlabel = document.createElement('div');
+            tlabel.className = 'room-list-code';
+            setText(tlabel, tm.san + ' — ' + (tm.category || '?'));
+            trow.appendChild(tlabel);
+            container.appendChild(trow);
+        }
+    });
+}
+
 function undoMove() {
-    if (mode === 'online' || mode === 'lichess' || mode === 'puzzle' || mode === 'replay') { return; }
+    if (mode === 'online' || mode === 'lichess' || mode === 'puzzle' || mode === 'replay' || mode === 'watch') { return; }
     if (historyStack.length === 0) { return; }
     gameOver = false;
     hideOverlay('gameover-overlay');
@@ -1530,6 +1789,9 @@ function init() {
     document.getElementById('btn-local-rooms').onclick = function () { showScreen('local-rooms'); };
     document.getElementById('btn-local-rooms-back').onclick = function () { showScreen('splash'); };
     document.getElementById('btn-puzzles').onclick = function () { openPuzzleMenu(); };
+    document.getElementById('btn-watch-games').onclick = function () { openTvChannelsScreen(); };
+    document.getElementById('btn-tv-list-back').onclick = function () { showScreen('splash'); };
+    document.getElementById('btn-watch-stop').onclick = function () { stopWatchingGame(); };
     document.getElementById('btn-puzzle-menu-back').onclick = function () { showScreen('splash'); };
     document.getElementById('btn-puzzle-daily').onclick = function () { requestDailyPuzzle(); };
     document.getElementById('btn-puzzle-random').onclick = function () { requestNextPuzzle(); };
@@ -1596,6 +1858,8 @@ function init() {
     document.getElementById('btn-lichess-challenge').onclick = function () { openLichessChallengeScreen(); };
     document.getElementById('btn-lichess-incoming').onclick = function () { openLichessIncomingScreen(); };
     document.getElementById('btn-lichess-my-games').onclick = function () { openLichessMyGames(); };
+    document.getElementById('btn-lichess-profile').onclick = function () { openLichessProfile(); };
+    document.getElementById('btn-lichess-profile-back').onclick = function () { showScreen('lichess-menu'); };
     document.getElementById('btn-lichess-import-pgn').onclick = function () { openImportPgnScreen(); };
     document.getElementById('btn-lichess-my-games-back').onclick = function () { showScreen('lichess-menu'); };
     document.getElementById('btn-lichess-my-games-refresh').onclick = function () { openLichessMyGames(); };
@@ -1607,6 +1871,8 @@ function init() {
     document.getElementById('btn-replay-last').onclick = function () { replayLast(); };
     document.getElementById('btn-replay-pgn').onclick = function () { openPgnViewScreen(); };
     document.getElementById('btn-replay-back').onclick = function () { showScreen(replayReturnScreen); };
+    document.getElementById('btn-replay-analyze').onclick = function () { openAnalysisScreen(); };
+    document.getElementById('btn-analysis-back').onclick = function () { showScreen('game'); };
     document.getElementById('btn-pgn-copy').onclick = function () { copyPgnText(); };
     document.getElementById('btn-pgn-view-back').onclick = function () { showScreen('game'); };
     document.getElementById('btn-lichess-challenge-back').onclick = function () { showScreen('lichess-menu'); };

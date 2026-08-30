@@ -97,6 +97,29 @@ var ChessEngine = (function () {
         };
     }
 
+    /* The reverse of stateFromFen - needed for Position Analysis (Opening
+     * Explorer / tablebase), which both take a FEN for the position being
+     * looked up rather than anything in our own state shape. */
+    function stateToFen(state) {
+        var rows = [];
+        for (var r = 7; r >= 0; r--) {
+            var row = '';
+            var empty = 0;
+            for (var f = 0; f < 8; f++) {
+                var p = state.board[r * 8 + f];
+                if (!p) { empty++; continue; }
+                if (empty > 0) { row += empty; empty = 0; }
+                row += (p.color === 'w') ? p.type.toUpperCase() : p.type;
+            }
+            if (empty > 0) { row += empty; }
+            rows.push(row);
+        }
+        var c = state.castling;
+        var castling = (c.wK ? 'K' : '') + (c.wQ ? 'Q' : '') + (c.bK ? 'k' : '') + (c.bQ ? 'q' : '');
+        var ep = (state.ep === null) ? '-' : squareToAlgebraic(state.ep);
+        return rows.join('/') + ' ' + state.turn + ' ' + (castling || '-') + ' ' + ep + ' ' + state.halfmove + ' ' + state.fullmove;
+    }
+
     function squareToAlgebraic(idx) {
         if (idx === null || idx === undefined || idx < 0 || idx > 63) { return null; }
         var file = idx % 8;
@@ -587,6 +610,7 @@ var ChessEngine = (function () {
         positionKey: positionKey,
         otherColor: otherColor,
         stateFromFen: stateFromFen,
+        stateToFen: stateToFen,
         squareToAlgebraic: squareToAlgebraic,
         algebraicToSquare: algebraicToSquare,
         moveToUci: moveToUci,
