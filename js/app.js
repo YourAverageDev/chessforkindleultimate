@@ -1498,10 +1498,23 @@ function commitPuzzleMove(mv) {
 }
 
 function playPuzzleOpponentReply() {
-    var replyUci = puzzleSolution[puzzleSolverIndex];
-    var legalNow = ChessEngine.generateLegalMoves(currentState);
-    var replyMove = ChessEngine.findMoveByUci(legalNow, replyUci);
+    /* Reset this FIRST, before anything below that could throw. Previously
+     * this was set only after computing the reply move, so an exception
+     * anywhere in that computation (an unusual position edge case, a
+     * mismatched solution entry) left puzzleAutoPlaying stuck true forever -
+     * and onSquareClick refuses every click while it's true, so the board
+     * looked and felt permanently frozen with no way to move any piece
+     * again short of reloading the page. */
     puzzleAutoPlaying = false;
+
+    var replyMove = null;
+    try {
+        var replyUci = puzzleSolution[puzzleSolverIndex];
+        var legalNow = ChessEngine.generateLegalMoves(currentState);
+        replyMove = ChessEngine.findMoveByUci(legalNow, replyUci);
+    } catch (e) {
+        replyMove = null;
+    }
 
     if (!replyMove) {
         /* The reconstructed position and Lichess's own no longer agree -
@@ -1513,12 +1526,18 @@ function playPuzzleOpponentReply() {
         return;
     }
 
-    moveSanHistory.push(ChessEngine.moveToSan(currentState, replyMove));
-    currentState = ChessEngine.makeMove(currentState, replyMove);
-    lastMove = { from: replyMove.from, to: replyMove.to };
-    recomputeLegalMoves();
-    updateBoardDisplay();
-    renderMoveHistory();
+    try {
+        moveSanHistory.push(ChessEngine.moveToSan(currentState, replyMove));
+        currentState = ChessEngine.makeMove(currentState, replyMove);
+        lastMove = { from: replyMove.from, to: replyMove.to };
+        recomputeLegalMoves();
+        updateBoardDisplay();
+        renderMoveHistory();
+    } catch (e) {
+        gameOver = true;
+        showGameOver("Couldn't continue this puzzle — please try another.");
+        return;
+    }
     puzzleSolverIndex++;
 
     if (puzzleSolverIndex >= puzzleSolution.length) {
