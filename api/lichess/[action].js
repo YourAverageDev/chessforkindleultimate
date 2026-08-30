@@ -487,11 +487,27 @@ async function handleWatchGame(req, res) {
     var gameId = (req.query && req.query.gameId || '').toString();
     if (!gameId) { return lichess.sendJson(res, 400, { error: 'missing_game_id' }); }
 
-    var result = await lichess.lichessFetch(null, '/api/game/export/' + encodeURIComponent(gameId) + '?moves=true');
+    /* `pgnInJson=true` is required here, not optional - without it,
+     * /api/game/export/{id} returns raw PGN text (not JSON) by default,
+     * lichessFetch's JSON.parse on that fails and silently falls back to
+     * { raw: text }, and every field read below then comes back
+     * empty/null - `ok:true` the whole time, since the HTTP call itself
+     * succeeded. That looked exactly like "the board never loads": an
+     * always-empty move list keeps the board frozen at the starting
+     * position forever, with no error ever surfacing. Every other export
+     * call in this file already includes this param (see handleGameState,
+     * handleMyGames) - this one was just missing it. */
+    var result = await lichess.lichessFetch(null, '/api/game/export/' + encodeURIComponent(gameId) + '?moves=true&pgnInJson=true');
     if (!result.ok) {
         return lichess.sendJson(res, result.status || 502, { error: 'watch_game_failed', detail: result.data });
     }
     var g = result.data || {};
+    if (g.raw !== undefined) {
+        /* lichessFetch's JSON.parse fell back - the response wasn't JSON
+         * at all, so nothing below can be trusted. Report this as a real
+         * failure instead of silently returning an empty/null game. */
+        return lichess.sendJson(res, 502, { error: 'watch_game_bad_response' });
+    }
     var players = g.players || {};
     var white = players.white || {};
     var black = players.black || {};

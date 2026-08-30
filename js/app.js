@@ -110,6 +110,7 @@ var replayReturnScreen = 'splash';
  * than holding a stream open (see api/lichess/[action].js's handleWatchGame
  * for why), consistent with this app's polling-only architecture. */
 var watchGameId = null;
+var watchPollFailCount = 0;
 
 /* Kindle pairing state (this device's own pairing code, while displayed
  * and waiting to be linked from another device). */
@@ -1597,6 +1598,7 @@ function renderTvChannelList(channels) {
 function beginWatchGame(gameId) {
     mode = 'watch';
     watchGameId = gameId;
+    watchPollFailCount = 0;
     gameOver = false;
     selectedSquare = null;
     flipped = false;
@@ -1618,7 +1620,20 @@ function beginWatchGame(gameId) {
 }
 
 function onWatchGameUpdate(err, data) {
-    if (err || !data) { return; } /* transient poll failure - just wait for the next tick */
+    if (err || !data) {
+        /* This used to fail completely silently - the board would just
+         * sit frozen on the starting position forever with no
+         * explanation, indistinguishable from "still loading". Surface it
+         * after a couple of misses instead, same pattern as every other
+         * poll loop in this app (see onLichessGameUpdate). */
+        watchPollFailCount++;
+        if (watchPollFailCount >= 3) {
+            setText(document.getElementById('status-text'), 'Could not load this game.');
+            setText(document.getElementById('puzzle-info'), 'It may have ended, or could not be reached. Use Stop Watching to pick another game.');
+        }
+        return;
+    }
+    watchPollFailCount = 0;
 
     var replay = ChessEngine.replayFullGame(data.moves || '');
     if (replay) {
